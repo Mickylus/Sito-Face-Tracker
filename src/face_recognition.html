@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FaceID — Riconoscimento Facciale</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Outfit:wght@300;400;500;600&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0c10;
+    --panel: #0f1318;
+    --border: #1e2530;
+    --border-hi: #2a3545;
+    --green: #00ff88;
+    --green-dim: #00ff8833;
+    --green-glow: #00ff8815;
+    --amber: #ffb800;
+    --red: #ff3b5c;
+    --blue: #4da6ff;
+    --text: #c8d4e0;
+    --text-dim: #5a6a7a;
+    --mono: 'Share Tech Mono', monospace;
+    --sans: 'Outfit', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    overflow-x: hidden;
+  }
+
+  /* HEADER */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 1.1rem;
+    letter-spacing: 2px;
+    color: var(--green);
+  }
+
+  .logo-icon {
+    width: 32px; height: 32px;
+    border: 1.5px solid var(--green);
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+  }
+
+  .logo-icon::before, .logo-icon::after {
+    content: '';
+    position: absolute;
+    width: 8px; height: 8px;
+    border-color: var(--green);
+    border-style: solid;
+  }
+  .logo-icon::before { top: 3px; left: 3px; border-width: 1.5px 0 0 1.5px; }
+  .logo-icon::after  { bottom: 3px; right: 3px; border-width: 0 1.5px 1.5px 0; }
+
+  .logo-dot { width: 8px; height: 8px; background: var(--green); border-radius: 50%; animation: pulse 2s ease-in-out infinite; }
+
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+
+  .status-indicator {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--text-dim);
+  }
+  .dot.online { background: var(--green); animation: pulse 1.5s infinite; }
+  .dot.warning { background: var(--amber); }
+  .dot.error   { background: var(--red); }
+
+  /* MAIN LAYOUT */
+  main {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 1.5rem;
+    padding: 1.5rem 2rem;
+    align-items: start;
+  }
+
+  /* CAMERA PANEL */
+  .camera-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+  }
+
+  .panel-header span { color: var(--green); }
+
+  .video-wrapper {
+    position: relative;
+    background: #050608;
+    aspect-ratio: 4/3;
+  }
+
+  video, canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  canvas { pointer-events: none; }
+
+  /* Scan overlay */
+  .scan-line {
+    position: absolute;
+    left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(to right, transparent, var(--green), transparent);
+    animation: scan 3s linear infinite;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .scan-line.active { opacity: 1; }
+  @keyframes scan { 0% { top: 0%; } 100% { top: 100%; } }
+
+  /* Corner brackets */
+  .brackets {
+    position: absolute; inset: 0; pointer-events: none; z-index: 10;
+  }
+  .brackets::before, .brackets::after,
+  .brackets-inner::before, .brackets-inner::after {
+    content: '';
+    position: absolute;
+    width: 24px; height: 24px;
+    border-color: var(--green);
+    border-style: solid;
+    opacity: 0.6;
+  }
+  .brackets::before { top: 12px; left: 12px; border-width: 2px 0 0 2px; }
+  .brackets::after  { top: 12px; right: 12px; border-width: 2px 2px 0 0; }
+  .brackets-inner::before { bottom: 12px; left: 12px; border-width: 0 0 2px 2px; }
+  .brackets-inner::after  { bottom: 12px; right: 12px; border-width: 0 2px 2px 0; }
+
+  .no-camera {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 1rem;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+  }
+
+  .no-camera svg { opacity: 0.3; }
+
+  .camera-controls {
+    padding: 1rem;
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .btn {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+    padding: 0.5rem 1.1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .btn-primary {
+    background: var(--green-dim);
+    border-color: var(--green);
+    color: var(--green);
+  }
+  .btn-primary:hover { background: #00ff8850; }
+  .btn-primary:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .btn-danger {
+    background: transparent;
+    border-color: var(--red);
+    color: var(--red);
+  }
+  .btn-danger:hover { background: #ff3b5c20; }
+  .btn-danger:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .btn-secondary {
+    background: transparent;
+    border-color: var(--border-hi);
+    color: var(--text-dim);
+  }
+  .btn-secondary:hover { border-color: var(--text-dim); color: var(--text); }
+
+  .spacer { flex: 1; }
+
+  .fps-counter {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+  .fps-counter span { color: var(--green); }
+
+  /* SIDEBAR */
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .card-title {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+
+  /* Connection */
+  .conn-body {
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .field label {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+  }
+
+  .field input {
+    background: var(--bg);
+    border: 1px solid var(--border-hi);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    padding: 0.4rem 0.7rem;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .field input:focus { border-color: var(--green); }
+
+  .conn-status {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    padding: 0.5rem 0.7rem;
+    background: var(--bg);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  /* Detection results */
+  .results-list {
+    padding: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+
+  .result-item {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.6rem 0.75rem;
+    transition: border-color 0.3s;
+  }
+
+  .result-item.detected { border-color: var(--green); }
+  .result-item.unknown  { border-color: var(--amber); }
+
+  .result-name {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .result-name.detected { color: var(--green); }
+  .result-name.unknown  { color: var(--amber); }
+
+  .result-meta {
+    display: flex; gap: 1rem; margin-top: 4px;
+  }
+
+  .result-meta span {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--text-dim);
+  }
+
+  .confidence-bar {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+
+  .confidence-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--green);
+    transition: width 0.4s ease;
+  }
+
+  .confidence-fill.low { background: var(--amber); }
+
+  .empty-state {
+    padding: 1.5rem;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+
+  /* Log */
+  .log-body {
+    padding: 0.5rem;
+  }
+
+  #log {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    height: 140px;
+    overflow-y: auto;
+    padding: 0.5rem;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    line-height: 1.6;
+    color: var(--text-dim);
+  }
+
+  .log-line { display: block; }
+  .log-line .ts { color: var(--text-dim); margin-right: 6px; }
+  .log-line.ok  .msg { color: var(--green); }
+  .log-line.warn .msg { color: var(--amber); }
+  .log-line.err  .msg { color: var(--red); }
+  .log-line.info .msg { color: var(--blue); }
+
+  /* Stats */
+  .stats-grid {
+    padding: 1rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  .stat {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.6rem 0.75rem;
+  }
+
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .stat-value {
+    font-family: var(--mono);
+    font-size: 1.25rem;
+    font-weight: 500;
+    color: var(--green);
+    margin-top: 2px;
+  }
+
+  /* FOOTER */
+  footer {
+    padding: 0.75rem 2rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--text-dim);
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; }
+    .sidebar { flex-direction: row; flex-wrap: wrap; }
+    .card { flex: 1 1 280px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon"><div class="logo-dot"></div></div>
+    Sistema FACE-TRACKING
+  </div>
+  <div class="status-bar">
+    <div class="status-indicator">
+      <div class="dot" id="ws-dot"></div>
+      <span id="ws-label">DISCONNESSO</span>
+    </div>
+    <div class="status-indicator">
+      <div class="dot" id="cam-dot"></div>
+      <span id="cam-label">CAMERA OFF</span>
+    </div>
+    <span id="clock" style="color: var(--text);">--:--:--</span>
+  </div>
+</header>
+
+<main>
+  <!-- CAMERA -->
+  <div class="camera-panel">
+    <div class="panel-header">
+      <span>LIVE FEED</span>
+      <span id="res-label">--- × ---</span>
+    </div>
+    <div class="video-wrapper">
+      <video id="video" autoplay muted playsinline></video>
+      <canvas id="overlay"></canvas>
+      <div class="scan-line" id="scan-line"></div>
+      <div class="brackets"><div class="brackets-inner"></div></div>
+      <div class="no-camera" id="no-camera">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+        Avvia la camera per iniziare
+      </div>
+    </div>
+    <div class="camera-controls">
+      <button class="btn btn-primary" id="btn-start">&#9654; AVVIA</button>
+      <button class="btn btn-danger" id="btn-stop" disabled>&#9632; STOP</button>
+      <button class="btn btn-secondary" id="btn-snap" disabled>&#9654;&#9654; CATTURA</button>
+      <div class="spacer"></div>
+      <div class="fps-counter">FPS: <span id="fps">--</span></div>
+    </div>
+  </div>
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+
+    <!-- Connessione -->
+    <div class="card">
+      <div class="card-title">Connessione WebSocket</div>
+      <div class="conn-body">
+        <div class="field">
+          <label>SERVER URL</label>
+          <input type="text" id="ws-url" value="ws://localhost:8765" />
+        </div>
+        <div class="conn-status">
+          <div class="dot" id="conn-dot"></div>
+          <span id="conn-msg">In attesa di connessione...</span>
+        </div>
+        <div style="display:flex; gap:0.5rem;">
+          <button class="btn btn-primary" id="btn-connect" style="flex:1">CONNETTI</button>
+          <button class="btn btn-danger" id="btn-disconnect" disabled style="flex:1">DISCONNETTI</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rilevamenti -->
+    <div class="card">
+      <div class="card-title">
+        Rilevamenti
+        <span id="det-count" style="color:var(--green)">0</span>
+      </div>
+      <div class="results-list" id="results-list">
+        <div class="empty-state" id="empty-state">Nessun volto rilevato</div>
+      </div>
+    </div>
+
+    <!-- Statistiche -->
+    <div class="card">
+      <div class="card-title">Statistiche sessione</div>
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-label">Frame inviati</div>
+          <div class="stat-value" id="stat-frames">0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Volti totali</div>
+          <div class="stat-value" id="stat-faces">0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Riconosciuti</div>
+          <div class="stat-value" id="stat-known">0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Sconosciuti</div>
+          <div class="stat-value" id="stat-unknown">0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="card">
+      <div class="card-title">Log sistema</div>
+      <div class="log-body">
+        <div id="log"></div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<footer>
+  <span>FaceID System v1.0 — Interfaccia WebSocket + Python</span>
+  <span id="latency">Latenza: -- ms</span>
+</footer>
+
+<script>
+  // ──────────────── UTILS ────────────────
+  const $ = id => document.getElementById(id);
+  const video     = $('video');
+  const overlay   = $('overlay');
+  const ctx       = overlay.getContext('2d');
+  const log       = $('log');
+
+  let ws = null, stream = null;
+  let frameTimer = null, fpsTimer = null;
+  let frameCount = 0, fpsCount = 0;
+  let stats = { frames: 0, faces: 0, known: 0, unknown: 0 };
+  let sendInterval = 200; // ms between frames sent to Python
+
+  // ──────────────── CLOCK ────────────────
+  setInterval(() => {
+    const now = new Date();
+    $('clock').textContent = now.toLocaleTimeString('it-IT');
+  }, 1000);
+
+  // ──────────────── LOG ────────────────
+  function addLog(msg, type = 'info') {
+    const now = new Date().toLocaleTimeString('it-IT');
+    const line = document.createElement('span');
+    line.className = `log-line ${type}`;
+    line.innerHTML = `<span class="ts">[${now}]</span><span class="msg">${msg}</span>`;
+    log.appendChild(line);
+    log.appendChild(document.createElement('br'));
+    log.scrollTop = log.scrollHeight;
+  }
+
+  // ──────────────── CAMERA ────────────────
+  $('btn-start').addEventListener('click', startCamera);
+  $('btn-stop').addEventListener('click', stopCamera);
+  $('btn-snap').addEventListener('click', sendFrame);
+
+  async function startCamera() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
+      });
+      video.srcObject = stream;
+      video.onloadedmetadata = () => {
+        overlay.width  = video.videoWidth;
+        overlay.height = video.videoHeight;
+        $('res-label').textContent = `${video.videoWidth} × ${video.videoHeight}`;
+        $('no-camera').style.display = 'none';
+        $('scan-line').classList.add('active');
+      };
+      setCamStatus('online', 'CAMERA ON');
+      $('btn-start').disabled = true;
+      $('btn-stop').disabled  = false;
+      $('btn-snap').disabled  = false;
+      addLog('Camera avviata', 'ok');
+      startFPS();
+      if (ws && ws.readyState === WebSocket.OPEN) startFrameLoop();
+    } catch(e) {
+      addLog('Errore camera: ' + e.message, 'err');
+      setCamStatus('error', 'ERRORE');
+    }
+  }
+
+  function stopCamera() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    stopFrameLoop();
+    stopFPS();
+    video.srcObject = null;
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+    $('no-camera').style.display = '';
+    $('scan-line').classList.remove('active');
+    setCamStatus('', 'CAMERA OFF');
+    $('btn-start').disabled = false;
+    $('btn-stop').disabled  = true;
+    $('btn-snap').disabled  = true;
+    $('res-label').textContent = '--- × ---';
+    addLog('Camera fermata', 'warn');
+  }
+
+  function setCamStatus(state, label) {
+    const dot = $('cam-dot');
+    dot.className = 'dot' + (state ? ' ' + state : '');
+    $('cam-label').textContent = label;
+  }
+
+  // ──────────────── FPS ────────────────
+  function startFPS() {
+    fpsTimer = setInterval(() => {
+      $('fps').textContent = fpsCount;
+      fpsCount = 0;
+    }, 1000);
+  }
+  function stopFPS() {
+    clearInterval(fpsTimer);
+    $('fps').textContent = '--';
+  }
+
+  video.addEventListener('timeupdate', () => { fpsCount++; });
+
+  // ──────────────── WEBSOCKET ────────────────
+  $('btn-connect').addEventListener('click', connectWS);
+  $('btn-disconnect').addEventListener('click', disconnectWS);
+
+  function connectWS() {
+    const url = $('ws-url').value.trim();
+    if (!url) return;
+    addLog(`Connessione a ${url}…`, 'info');
+    try {
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        setWsStatus('online', 'CONNESSO');
+        setConnStatus('online', 'WebSocket connesso');
+        $('btn-connect').disabled    = true;
+        $('btn-disconnect').disabled = false;
+        addLog('WebSocket connesso', 'ok');
+        if (stream) startFrameLoop();
+      };
+
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          handleResults(data);
+        } catch(err) {
+          addLog('Risposta non valida: ' + err.message, 'err');
+        }
+      };
+
+      ws.onerror = () => {
+        addLog('Errore WebSocket', 'err');
+        setWsStatus('error', 'ERRORE');
+        setConnStatus('error', 'Errore di connessione');
+      };
+
+      ws.onclose = () => {
+        setWsStatus('', 'DISCONNESSO');
+        setConnStatus('', 'Connessione chiusa');
+        $('btn-connect').disabled    = false;
+        $('btn-disconnect').disabled = true;
+        addLog('WebSocket disconnesso', 'warn');
+        stopFrameLoop();
+      };
+    } catch(e) {
+      addLog('URL non valido: ' + e.message, 'err');
+    }
+  }
+
+  function disconnectWS() {
+    if (ws) { ws.close(); ws = null; }
+    stopFrameLoop();
+  }
+
+  function setWsStatus(state, label) {
+    const dot = $('ws-dot');
+    dot.className = 'dot' + (state ? ' ' + state : '');
+    $('ws-label').textContent = label;
+  }
+
+  function setConnStatus(state, msg) {
+    const dot = $('conn-dot');
+    dot.className = 'dot' + (state ? ' ' + state : '');
+    $('conn-msg').textContent = msg;
+  }
+
+  // ──────────────── FRAME LOOP ────────────────
+  function startFrameLoop() {
+    stopFrameLoop();
+    frameTimer = setInterval(sendFrame, sendInterval);
+    addLog('Invio frame avviato', 'ok');
+  }
+
+  function stopFrameLoop() {
+    clearInterval(frameTimer);
+    frameTimer = null;
+  }
+
+  function sendFrame() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!stream) return;
+
+    const tmpCanvas = document.createElement('canvas');
+    tmpCanvas.width  = video.videoWidth  || 640;
+    tmpCanvas.height = video.videoHeight || 480;
+    const tmpCtx = tmpCanvas.getContext('2d');
+    tmpCtx.drawImage(video, 0, 0);
+
+    const t0 = performance.now();
+    tmpCanvas.toBlob(blob => {
+      if (!blob) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const b64 = reader.result.split(',')[1];
+        ws.send(JSON.stringify({
+          type: 'frame',
+          image: b64,
+          timestamp: Date.now()
+        }));
+        stats.frames++;
+        $('stat-frames').textContent = stats.frames;
+        const latency = Math.round(performance.now() - t0);
+        $('latency').textContent = `Latenza: ${latency} ms`;
+      };
+      reader.readAsDataURL(blob);
+    }, 'image/jpeg', 0.7);
+  }
+
+  // ──────────────── RESULTS ────────────────
+  function handleResults(data) {
+    // data = { faces: [{ name, confidence, box: {x,y,w,h}, recognized }] }
+    const faces = data.faces || [];
+
+    // Aggiorna stats
+    stats.faces   += faces.length;
+    stats.known   += faces.filter(f => f.recognized).length;
+    stats.unknown += faces.filter(f => !f.recognized).length;
+    $('stat-faces').textContent   = stats.faces;
+    $('stat-known').textContent   = stats.known;
+    $('stat-unknown').textContent = stats.unknown;
+
+    // Disegna bounding box
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+    faces.forEach(face => {
+      drawBox(face);
+    });
+
+    // Lista rilevamenti
+    updateResultsList(faces);
+    $('det-count').textContent = faces.length;
+  }
+
+  function drawBox(face) {
+    const b = face.box;
+    if (!b) return;
+    const color = face.recognized ? '#00ff88' : '#ffb800';
+    const conf  = Math.round((face.confidence || 0) * 100);
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 2;
+    ctx.shadowColor = color;
+    ctx.shadowBlur  = 8;
+    ctx.strokeRect(b.x, b.y, b.w, b.h);
+    ctx.shadowBlur  = 0;
+
+    // Corner accents
+    const cs = 12;
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 3;
+    [[b.x, b.y, 1,1],[b.x+b.w, b.y, -1,1],[b.x, b.y+b.h, 1,-1],[b.x+b.w, b.y+b.h,-1,-1]].forEach(([x,y,dx,dy]) => {
+      ctx.beginPath();
+      ctx.moveTo(x + dx*cs, y);
+      ctx.lineTo(x, y);
+      ctx.lineTo(x, y + dy*cs);
+      ctx.stroke();
+    });
+
+    // Label
+    const label = `${face.name || 'SCONOSCIUTO'}  ${conf}%`;
+    ctx.font = '13px "Share Tech Mono", monospace';
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = color + 'cc';
+    ctx.fillRect(b.x, b.y - 22, tw + 12, 20);
+    ctx.fillStyle = '#000';
+    ctx.fillText(label, b.x + 6, b.y - 7);
+  }
+
+  function updateResultsList(faces) {
+    const list = $('results-list');
+    const empty = $('empty-state');
+    list.innerHTML = '';
+
+    if (faces.length === 0) {
+      list.appendChild(empty);
+      return;
+    }
+
+    faces.forEach(face => {
+      const conf = Math.round((face.confidence || 0) * 100);
+      const type = face.recognized ? 'detected' : 'unknown';
+      const item = document.createElement('div');
+      item.className = `result-item ${type}`;
+      item.innerHTML = `
+        <div class="result-name ${type}">${face.name || 'SCONOSCIUTO'}</div>
+        <div class="result-meta">
+          <span>Confidenza: ${conf}%</span>
+          <span>${face.recognized ? '✓ RICONOSCIUTO' : '? SCONOSCIUTO'}</span>
+        </div>
+        <div class="confidence-bar">
+          <div class="confidence-fill ${conf < 60 ? 'low' : ''}" style="width:${conf}%"></div>
+        </div>`;
+      list.appendChild(item);
+    });
+  }
+
+  // ──────────────── INIT ────────────────
+  addLog('Sistema inizializzato', 'ok');
+  addLog('Avvia la camera e connetti il server Python', 'info');
+</script>
+</body>
+</html>

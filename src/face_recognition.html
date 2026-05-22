@@ -3,25 +3,24 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FaceID — Riconoscimento Facciale</title>
+<title>FaceID — ESP32 Stream</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Outfit:wght@300;400;500;600&display=swap');
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg: #0a0c10;
-    --panel: #0f1318;
-    --border: #1e2530;
-    --border-hi: #2a3545;
-    --green: #00ff88;
-    --green-dim: #00ff8833;
-    --green-glow: #00ff8815;
-    --amber: #ffb800;
-    --red: #ff3b5c;
-    --blue: #4da6ff;
-    --text: #c8d4e0;
-    --text-dim: #5a6a7a;
+    --bg:         #0a0c10;
+    --panel:      #0f1318;
+    --border:     #1e2530;
+    --border-hi:  #2a3545;
+    --green:      #00ff88;
+    --green-dim:  #00ff8833;
+    --amber:      #ffb800;
+    --red:        #ff3b5c;
+    --blue:       #4da6ff;
+    --text:       #c8d4e0;
+    --text-dim:   #5a6a7a;
     --mono: 'Share Tech Mono', monospace;
     --sans: 'Outfit', sans-serif;
   }
@@ -36,7 +35,7 @@
     overflow-x: hidden;
   }
 
-  /* HEADER */
+  /* ── HEADER ── */
   header {
     display: flex;
     align-items: center;
@@ -45,415 +44,193 @@
     border-bottom: 1px solid var(--border);
     background: var(--panel);
   }
-
   .logo {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-family: var(--mono);
-    font-size: 1.1rem;
-    letter-spacing: 2px;
-    color: var(--green);
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 1.05rem;
+    letter-spacing: 2px; color: var(--green);
   }
-
-  .logo-icon {
-    width: 32px; height: 32px;
-    border: 1.5px solid var(--green);
-    border-radius: 4px;
+  .logo-box {
+    width: 30px; height: 30px;
+    border: 1.5px solid var(--green); border-radius: 4px;
     display: flex; align-items: center; justify-content: center;
-    position: relative;
   }
+  .logo-dot { width: 8px; height: 8px; background: var(--green); border-radius: 50%; animation: blink 2s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
 
-  .logo-icon::before, .logo-icon::after {
-    content: '';
-    position: absolute;
-    width: 8px; height: 8px;
-    border-color: var(--green);
-    border-style: solid;
+  .hdr-status {
+    display: flex; align-items: center; gap: 1.5rem;
+    font-family: var(--mono); font-size: .72rem; color: var(--text-dim);
   }
-  .logo-icon::before { top: 3px; left: 3px; border-width: 1.5px 0 0 1.5px; }
-  .logo-icon::after  { bottom: 3px; right: 3px; border-width: 0 1.5px 1.5px 0; }
+  .si { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); }
+  .dot.on  { background: var(--green);  animation: blink 1.5s infinite; }
+  .dot.err { background: var(--red); }
+  .dot.wrn { background: var(--amber); }
 
-  .logo-dot { width: 8px; height: 8px; background: var(--green); border-radius: 50%; animation: pulse 2s ease-in-out infinite; }
-
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-
-  .status-bar {
-    display: flex;
-    align-items: center;
-    gap: 1.5rem;
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    color: var(--text-dim);
-  }
-
-  .status-indicator {
-    display: flex; align-items: center; gap: 6px;
-  }
-  .dot {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: var(--text-dim);
-  }
-  .dot.online { background: var(--green); animation: pulse 1.5s infinite; }
-  .dot.warning { background: var(--amber); }
-  .dot.error   { background: var(--red); }
-
-  /* MAIN LAYOUT */
+  /* ── MAIN ── */
   main {
     display: grid;
-    grid-template-columns: 1fr 320px;
-    gap: 1.5rem;
-    padding: 1.5rem 2rem;
+    grid-template-columns: 1fr 310px;
+    gap: 1.25rem;
+    padding: 1.25rem 2rem;
     align-items: start;
   }
 
-  /* CAMERA PANEL */
-  .camera-panel {
+  /* ── STREAM PANEL ── */
+  .stream-panel {
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 8px;
     overflow: hidden;
-    position: relative;
   }
-
-  .panel-header {
+  .panel-hdr {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 0.75rem 1rem;
+    padding: .65rem 1rem;
     border-bottom: 1px solid var(--border);
-    font-family: var(--mono);
-    font-size: 0.72rem;
-    color: var(--text-dim);
+    font-family: var(--mono); font-size: .7rem; color: var(--text-dim);
     letter-spacing: 1px;
   }
+  .panel-hdr em { color: var(--green); font-style: normal; }
 
-  .panel-header span { color: var(--green); }
-
-  .video-wrapper {
+  /* Il canvas occupa tutto lo spazio disponibile mantenendo l'aspect ratio */
+  .canvas-wrap {
     position: relative;
     background: #050608;
     aspect-ratio: 4/3;
+    width: 100%;
   }
-
-  video, canvas {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    object-fit: cover;
+  #stream-canvas {
     display: block;
+    width: 100%; height: 100%;
+    object-fit: contain;
   }
 
-  canvas { pointer-events: none; }
+  /* Overlay decorativo angoli */
+  .brackets { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+  .brackets::before,.brackets::after,
+  .brackets > span::before,.brackets > span::after {
+    content:''; position: absolute;
+    width: 20px; height: 20px;
+    border-color: var(--green); border-style: solid; opacity: .5;
+  }
+  .brackets::before { top:10px; left:10px;  border-width:2px 0 0 2px; }
+  .brackets::after  { top:10px; right:10px; border-width:2px 2px 0 0; }
+  .brackets > span::before { bottom:10px; left:10px;  border-width:0 0 2px 2px; }
+  .brackets > span::after  { bottom:10px; right:10px; border-width:0 2px 2px 0; }
 
-  /* Scan overlay */
-  .scan-line {
-    position: absolute;
-    left: 0; right: 0;
-    height: 2px;
+  /* Scan line animata quando stream attivo */
+  .scan { position: absolute; left:0; right:0; height:2px;
     background: linear-gradient(to right, transparent, var(--green), transparent);
-    animation: scan 3s linear infinite;
-    opacity: 0;
-    pointer-events: none;
-    z-index: 10;
-  }
+    animation: scanAnim 3s linear infinite; display:none; pointer-events:none; z-index:6; }
+  .scan.active { display: block; }
+  @keyframes scanAnim { 0%{top:0%} 100%{top:100%} }
 
-  .scan-line.active { opacity: 1; }
-  @keyframes scan { 0% { top: 0%; } 100% { top: 100%; } }
-
-  /* Corner brackets */
-  .brackets {
-    position: absolute; inset: 0; pointer-events: none; z-index: 10;
-  }
-  .brackets::before, .brackets::after,
-  .brackets-inner::before, .brackets-inner::after {
-    content: '';
-    position: absolute;
-    width: 24px; height: 24px;
-    border-color: var(--green);
-    border-style: solid;
-    opacity: 0.6;
-  }
-  .brackets::before { top: 12px; left: 12px; border-width: 2px 0 0 2px; }
-  .brackets::after  { top: 12px; right: 12px; border-width: 2px 2px 0 0; }
-  .brackets-inner::before { bottom: 12px; left: 12px; border-width: 0 0 2px 2px; }
-  .brackets-inner::after  { bottom: 12px; right: 12px; border-width: 0 2px 2px 0; }
-
-  .no-camera {
+  /* Placeholder no-stream */
+  .no-stream {
     position: absolute; inset: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 1rem;
-    color: var(--text-dim);
-    font-family: var(--mono);
-    font-size: 0.8rem;
+    gap: .75rem; color: var(--text-dim); font-family: var(--mono); font-size: .8rem;
+    z-index: 4;
   }
+  .no-stream svg { opacity: .25; }
 
-  .no-camera svg { opacity: 0.3; }
-
-  .camera-controls {
-    padding: 1rem;
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
+  /* stream controls */
+  .stream-ctrl {
+    padding: .75rem 1rem;
+    display: flex; align-items: center; gap: .65rem;
   }
-
   .btn {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    letter-spacing: 1px;
-    padding: 0.5rem 1.1rem;
-    border-radius: 4px;
-    cursor: pointer;
-    border: 1px solid;
-    transition: all 0.2s;
-    text-transform: uppercase;
+    font-family: var(--mono); font-size: .72rem; letter-spacing: 1px;
+    padding: .45rem 1rem; border-radius: 4px; cursor: pointer;
+    border: 1px solid; transition: all .2s; text-transform: uppercase;
+    white-space: nowrap;
   }
-
-  .btn-primary {
-    background: var(--green-dim);
-    border-color: var(--green);
-    color: var(--green);
-  }
-  .btn-primary:hover { background: #00ff8850; }
-  .btn-primary:disabled { opacity: 0.3; cursor: not-allowed; }
-
-  .btn-danger {
-    background: transparent;
-    border-color: var(--red);
-    color: var(--red);
-  }
-  .btn-danger:hover { background: #ff3b5c20; }
-  .btn-danger:disabled { opacity: 0.3; cursor: not-allowed; }
-
-  .btn-secondary {
-    background: transparent;
-    border-color: var(--border-hi);
-    color: var(--text-dim);
-  }
-  .btn-secondary:hover { border-color: var(--text-dim); color: var(--text); }
-
+  .btn-g { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+  .btn-g:hover { background: #00ff8855; }
+  .btn-r { background: transparent; border-color: var(--red); color: var(--red); }
+  .btn-r:hover { background: #ff3b5c20; }
+  .btn:disabled { opacity: .3; cursor: not-allowed; }
   .spacer { flex: 1; }
+  .fps-lbl { font-family: var(--mono); font-size: .72rem; color: var(--text-dim); }
+  .fps-lbl em { color: var(--green); font-style: normal; }
 
-  .fps-counter {
-    font-family: var(--mono);
-    font-size: 0.72rem;
-    color: var(--text-dim);
-  }
-  .fps-counter span { color: var(--green); }
-
-  /* SIDEBAR */
-  .sidebar {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
+  /* ── SIDEBAR ── */
+  .sidebar { display: flex; flex-direction: column; gap: 1rem; }
 
   .card {
     background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    overflow: hidden;
+    border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
   }
-
-  .card-title {
-    font-family: var(--mono);
-    font-size: 0.7rem;
-    letter-spacing: 1.5px;
-    color: var(--text-dim);
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border);
-    text-transform: uppercase;
+  .card-hdr {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: 1.5px;
+    color: var(--text-dim); padding: .65rem 1rem;
+    border-bottom: 1px solid var(--border); text-transform: uppercase;
     display: flex; align-items: center; justify-content: space-between;
   }
+  .card-hdr em { color: var(--green); font-style: normal; }
 
-  /* Connection */
-  .conn-body {
-    padding: 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .field label {
-    font-family: var(--mono);
-    font-size: 0.68rem;
-    color: var(--text-dim);
-    letter-spacing: 1px;
-  }
-
+  /* connection card */
+  .conn-body { padding: .85rem 1rem; display: flex; flex-direction: column; gap: .65rem; }
+  .field label { font-family: var(--mono); font-size: .67rem; color: var(--text-dim); letter-spacing: 1px; display: block; margin-bottom: 3px; }
   .field input {
-    background: var(--bg);
-    border: 1px solid var(--border-hi);
-    border-radius: 4px;
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: 0.8rem;
-    padding: 0.4rem 0.7rem;
-    width: 100%;
-    outline: none;
-    transition: border-color 0.2s;
+    width: 100%; background: var(--bg); border: 1px solid var(--border-hi);
+    border-radius: 4px; color: var(--text); font-family: var(--mono);
+    font-size: .78rem; padding: .38rem .65rem; outline: none; transition: border-color .2s;
   }
-
   .field input:focus { border-color: var(--green); }
-
-  .conn-status {
-    font-family: var(--mono);
-    font-size: 0.72rem;
-    color: var(--text-dim);
-    padding: 0.5rem 0.7rem;
-    background: var(--bg);
-    border-radius: 4px;
-    border: 1px solid var(--border);
-    display: flex; align-items: center; gap: 8px;
+  .conn-st {
+    font-family: var(--mono); font-size: .7rem; color: var(--text-dim);
+    padding: .45rem .65rem; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 4px;
+    display: flex; align-items: center; gap: 7px;
   }
+  .conn-btns { display: flex; gap: .5rem; }
+  .conn-btns .btn { flex: 1; }
 
-  /* Detection results */
-  .results-list {
-    padding: 0.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    max-height: 240px;
-    overflow-y: auto;
+  /* detections */
+  .det-list { padding: .5rem; display: flex; flex-direction: column; gap: .5rem; max-height: 220px; overflow-y: auto; }
+  .det-item {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: .55rem .7rem; transition: border-color .3s;
   }
+  .det-item.known   { border-color: var(--green); }
+  .det-item.unknown { border-color: var(--amber); }
+  .det-name { font-family: var(--mono); font-size: .82rem; }
+  .det-name.known   { color: var(--green); }
+  .det-name.unknown { color: var(--amber); }
+  .det-meta { display: flex; gap: .75rem; margin-top: 3px; }
+  .det-meta span { font-family: var(--mono); font-size: .67rem; color: var(--text-dim); }
+  .conf-bar { height: 3px; background: var(--border); border-radius: 2px; margin-top: 5px; overflow: hidden; }
+  .conf-fill { height: 100%; border-radius: 2px; background: var(--green); transition: width .4s; }
+  .conf-fill.low { background: var(--amber); }
+  .empty-st { padding: 1.25rem; text-align: center; font-family: var(--mono); font-size: .73rem; color: var(--text-dim); }
 
-  .result-item {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0.6rem 0.75rem;
-    transition: border-color 0.3s;
-  }
+  /* stats */
+  .stats-grid { padding: .85rem; display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+  .stat { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: .55rem .7rem; }
+  .stat-lbl { font-family: var(--mono); font-size: .63rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; }
+  .stat-val { font-family: var(--mono); font-size: 1.2rem; color: var(--green); margin-top: 2px; }
 
-  .result-item.detected { border-color: var(--green); }
-  .result-item.unknown  { border-color: var(--amber); }
+  /* log */
+  .log-body { padding: .5rem; }
+  #log { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; height: 130px; overflow-y: auto; padding: .45rem; font-family: var(--mono); font-size: .68rem; line-height: 1.6; color: var(--text-dim); }
+  .ll { display: block; }
+  .ll .ts { color: var(--text-dim); margin-right: 5px; }
+  .ll.ok  .msg { color: var(--green); }
+  .ll.wrn .msg { color: var(--amber); }
+  .ll.err .msg { color: var(--red); }
+  .ll.inf .msg { color: var(--blue); }
 
-  .result-name {
-    font-family: var(--mono);
-    font-size: 0.85rem;
-    font-weight: 500;
-    color: var(--text);
-  }
+  /* ── FOOTER ── */
+  footer { padding: .65rem 2rem; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-family: var(--mono); font-size: .67rem; color: var(--text-dim); }
 
-  .result-name.detected { color: var(--green); }
-  .result-name.unknown  { color: var(--amber); }
-
-  .result-meta {
-    display: flex; gap: 1rem; margin-top: 4px;
-  }
-
-  .result-meta span {
-    font-family: var(--mono);
-    font-size: 0.68rem;
-    color: var(--text-dim);
-  }
-
-  .confidence-bar {
-    height: 3px;
-    background: var(--border);
-    border-radius: 2px;
-    margin-top: 6px;
-    overflow: hidden;
-  }
-
-  .confidence-fill {
-    height: 100%;
-    border-radius: 2px;
-    background: var(--green);
-    transition: width 0.4s ease;
-  }
-
-  .confidence-fill.low { background: var(--amber); }
-
-  .empty-state {
-    padding: 1.5rem;
-    text-align: center;
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    color: var(--text-dim);
-  }
-
-  /* Log */
-  .log-body {
-    padding: 0.5rem;
-  }
-
-  #log {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    height: 140px;
-    overflow-y: auto;
-    padding: 0.5rem;
-    font-family: var(--mono);
-    font-size: 0.7rem;
-    line-height: 1.6;
-    color: var(--text-dim);
-  }
-
-  .log-line { display: block; }
-  .log-line .ts { color: var(--text-dim); margin-right: 6px; }
-  .log-line.ok  .msg { color: var(--green); }
-  .log-line.warn .msg { color: var(--amber); }
-  .log-line.err  .msg { color: var(--red); }
-  .log-line.info .msg { color: var(--blue); }
-
-  /* Stats */
-  .stats-grid {
-    padding: 1rem;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-  }
-
-  .stat {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0.6rem 0.75rem;
-  }
-
-  .stat-label {
-    font-family: var(--mono);
-    font-size: 0.65rem;
-    color: var(--text-dim);
-    letter-spacing: 1px;
-    text-transform: uppercase;
-  }
-
-  .stat-value {
-    font-family: var(--mono);
-    font-size: 1.25rem;
-    font-weight: 500;
-    color: var(--green);
-    margin-top: 2px;
-  }
-
-  /* FOOTER */
-  footer {
-    padding: 0.75rem 2rem;
-    border-top: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-family: var(--mono);
-    font-size: 0.68rem;
-    color: var(--text-dim);
-  }
-
-  /* Scrollbar */
+  /* scrollbar */
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
   ::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
 
-  @media (max-width: 900px) {
+  @media (max-width: 860px) {
     main { grid-template-columns: 1fr; }
-    .sidebar { flex-direction: row; flex-wrap: wrap; }
-    .card { flex: 1 1 280px; }
   }
 </style>
 </head>
@@ -461,418 +238,267 @@
 
 <header>
   <div class="logo">
-    <div class="logo-icon"><div class="logo-dot"></div></div>
-    Sistema FACE-TRACKING
+    <div class="logo-box"><div class="logo-dot"></div></div>
+    FACEID / ESP32
   </div>
-  <div class="status-bar">
-    <div class="status-indicator">
-      <div class="dot" id="ws-dot"></div>
-      <span id="ws-label">DISCONNESSO</span>
-    </div>
-    <div class="status-indicator">
-      <div class="dot" id="cam-dot"></div>
-      <span id="cam-label">CAMERA OFF</span>
-    </div>
-    <span id="clock" style="color: var(--text);">--:--:--</span>
+  <div class="hdr-status">
+    <div class="si"><div class="dot" id="hws"></div><span id="hwsl">DISCONNESSO</span></div>
+    <div class="si"><div class="dot" id="hst"></div><span id="hstl">STREAM OFF</span></div>
+    <span id="clk" style="color:var(--text)">--:--:--</span>
   </div>
 </header>
 
 <main>
-  <!-- CAMERA -->
-  <div class="camera-panel">
-    <div class="panel-header">
-      <span>LIVE FEED</span>
-      <span id="res-label">--- × ---</span>
+
+  <!-- ── STREAM PANEL ── -->
+  <div class="stream-panel">
+    <div class="panel-hdr">
+      <span>ESP32-CAM LIVE</span>
+      <em id="res-lbl">--- × ---</em>
     </div>
-    <div class="video-wrapper">
-      <video id="video" autoplay muted playsinline></video>
-      <canvas id="overlay"></canvas>
-      <div class="scan-line" id="scan-line"></div>
-      <div class="brackets"><div class="brackets-inner"></div></div>
-      <div class="no-camera" id="no-camera">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
-          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-          <circle cx="12" cy="13" r="4"/>
+    <div class="canvas-wrap">
+      <canvas id="stream-canvas"></canvas>
+      <div class="brackets"><span></span></div>
+      <div class="scan" id="scan"></div>
+      <div class="no-stream" id="no-stream">
+        <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+          <rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3l-4 4-4-4"/><circle cx="12" cy="14" r="3"/>
         </svg>
-        Avvia la camera per iniziare
+        Connetti il server Python per avviare lo stream
       </div>
     </div>
-    <div class="camera-controls">
-      <button class="btn btn-primary" id="btn-start">&#9654; AVVIA</button>
-      <button class="btn btn-danger" id="btn-stop" disabled>&#9632; STOP</button>
-      <button class="btn btn-secondary" id="btn-snap" disabled>&#9654;&#9654; CATTURA</button>
+    <div class="stream-ctrl">
+      <span class="fps-lbl">FPS: <em id="fps-val">--</em></span>
       <div class="spacer"></div>
-      <div class="fps-counter">FPS: <span id="fps">--</span></div>
+      <span id="lat-lbl" style="font-family:var(--mono);font-size:.68rem;color:var(--text-dim)">Latenza: -- ms</span>
     </div>
   </div>
 
-  <!-- SIDEBAR -->
+  <!-- ── SIDEBAR ── -->
   <div class="sidebar">
 
     <!-- Connessione -->
     <div class="card">
-      <div class="card-title">Connessione WebSocket</div>
+      <div class="card-hdr">Connessione WebSocket</div>
       <div class="conn-body">
         <div class="field">
           <label>SERVER URL</label>
-          <input type="text" id="ws-url" value="ws://localhost:8765" />
+          <input id="ws-url" type="text" value="ws://localhost:8765">
         </div>
-        <div class="conn-status">
-          <div class="dot" id="conn-dot"></div>
-          <span id="conn-msg">In attesa di connessione...</span>
+        <div class="conn-st">
+          <div class="dot" id="cdot"></div>
+          <span id="cmsg">In attesa...</span>
         </div>
-        <div style="display:flex; gap:0.5rem;">
-          <button class="btn btn-primary" id="btn-connect" style="flex:1">CONNETTI</button>
-          <button class="btn btn-danger" id="btn-disconnect" disabled style="flex:1">DISCONNETTI</button>
+        <div class="conn-btns">
+          <button class="btn btn-g" id="btn-conn">CONNETTI</button>
+          <button class="btn btn-r" id="btn-disc" disabled>DISCONNETTI</button>
         </div>
       </div>
     </div>
 
     <!-- Rilevamenti -->
     <div class="card">
-      <div class="card-title">
-        Rilevamenti
-        <span id="det-count" style="color:var(--green)">0</span>
-      </div>
-      <div class="results-list" id="results-list">
-        <div class="empty-state" id="empty-state">Nessun volto rilevato</div>
+      <div class="card-hdr">Rilevamenti <em id="det-n">0</em></div>
+      <div class="det-list" id="det-list">
+        <div class="empty-st" id="det-empty">Nessun volto rilevato</div>
       </div>
     </div>
 
-    <!-- Statistiche -->
+    <!-- Stats -->
     <div class="card">
-      <div class="card-title">Statistiche sessione</div>
+      <div class="card-hdr">Sessione</div>
       <div class="stats-grid">
-        <div class="stat">
-          <div class="stat-label">Frame inviati</div>
-          <div class="stat-value" id="stat-frames">0</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Volti totali</div>
-          <div class="stat-value" id="stat-faces">0</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Riconosciuti</div>
-          <div class="stat-value" id="stat-known">0</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Sconosciuti</div>
-          <div class="stat-value" id="stat-unknown">0</div>
-        </div>
+        <div class="stat"><div class="stat-lbl">Frame rx</div><div class="stat-val" id="s-frames">0</div></div>
+        <div class="stat"><div class="stat-lbl">Volti tot.</div><div class="stat-val" id="s-faces">0</div></div>
+        <div class="stat"><div class="stat-lbl">Riconosciuti</div><div class="stat-val" id="s-known">0</div></div>
+        <div class="stat"><div class="stat-lbl">Sconosciuti</div><div class="stat-val" id="s-unk">0</div></div>
       </div>
     </div>
 
     <!-- Log -->
     <div class="card">
-      <div class="card-title">Log sistema</div>
-      <div class="log-body">
-        <div id="log"></div>
-      </div>
+      <div class="card-hdr">Log sistema</div>
+      <div class="log-body"><div id="log"></div></div>
     </div>
 
   </div>
 </main>
 
 <footer>
-  <span>FaceID System v1.0 — Interfaccia WebSocket + Python</span>
-  <span id="latency">Latenza: -- ms</span>
+  <span>FaceID System — ESP32-CAM + BlazeFace + WebSocket</span>
+  <span id="foot-lat">--</span>
 </footer>
 
 <script>
-  // ──────────────── UTILS ────────────────
-  const $ = id => document.getElementById(id);
-  const video     = $('video');
-  const overlay   = $('overlay');
-  const ctx       = overlay.getContext('2d');
-  const log       = $('log');
+// ── utils ──────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const canvas = $('stream-canvas');
+const ctx    = canvas.getContext('2d');
 
-  let ws = null, stream = null;
-  let frameTimer = null, fpsTimer = null;
-  let frameCount = 0, fpsCount = 0;
-  let stats = { frames: 0, faces: 0, known: 0, unknown: 0 };
-  let sendInterval = 200; // ms between frames sent to Python
+let ws = null;
+let stats = { frames: 0, faces: 0, known: 0, unk: 0 };
+let lastFrameTs = 0;
 
-  // ──────────────── CLOCK ────────────────
-  setInterval(() => {
-    const now = new Date();
-    $('clock').textContent = now.toLocaleTimeString('it-IT');
-  }, 1000);
+// ── clock ──────────────────────────────────────────────────────
+setInterval(() => $('clk').textContent = new Date().toLocaleTimeString('it-IT'), 1000);
 
-  // ──────────────── LOG ────────────────
-  function addLog(msg, type = 'info') {
-    const now = new Date().toLocaleTimeString('it-IT');
-    const line = document.createElement('span');
-    line.className = `log-line ${type}`;
-    line.innerHTML = `<span class="ts">[${now}]</span><span class="msg">${msg}</span>`;
-    log.appendChild(line);
-    log.appendChild(document.createElement('br'));
-    log.scrollTop = log.scrollHeight;
+// ── log ────────────────────────────────────────────────────────
+function addLog(msg, type = 'inf') {
+  const ts   = new Date().toLocaleTimeString('it-IT');
+  const line = document.createElement('span');
+  line.className = `ll ${type}`;
+  line.innerHTML = `<span class="ts">[${ts}]</span><span class="msg">${msg}</span>`;
+  const br = document.createElement('br');
+  $('log').append(line, br);
+  $('log').scrollTop = 9999;
+}
+
+// ── status helpers ─────────────────────────────────────────────
+function setWsStatus(state, label) {
+  $('hws').className  = 'dot' + (state ? ' ' + state : '');
+  $('hwsl').textContent = label;
+}
+function setStStatus(state, label) {
+  $('hst').className  = 'dot' + (state ? ' ' + state : '');
+  $('hstl').textContent = label;
+}
+function setConnStatus(state, msg) {
+  $('cdot').className = 'dot' + (state ? ' ' + state : '');
+  $('cmsg').textContent = msg;
+}
+
+// ── WebSocket ──────────────────────────────────────────────────
+$('btn-conn').addEventListener('click', connect);
+$('btn-disc').addEventListener('click', disconnect);
+
+function connect() {
+  const url = $('ws-url').value.trim();
+  addLog(`Connessione a ${url}…`, 'inf');
+  try {
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+      setWsStatus('on', 'CONNESSO');
+      setConnStatus('on', 'WebSocket connesso');
+      $('btn-conn').disabled = true;
+      $('btn-disc').disabled = false;
+      addLog('WebSocket connesso — in attesa dello stream', 'ok');
+    };
+
+    ws.onmessage = (e) => handleMessage(e.data);
+
+    ws.onerror = () => {
+      addLog('Errore WebSocket — server Python attivo?', 'err');
+      setWsStatus('err', 'ERRORE');
+      setConnStatus('err', 'Connessione fallita');
+    };
+
+    ws.onclose = () => {
+      setWsStatus('', 'DISCONNESSO');
+      setStStatus('', 'STREAM OFF');
+      setConnStatus('', 'Connessione chiusa');
+      $('btn-conn').disabled = false;
+      $('btn-disc').disabled = true;
+      $('scan').classList.remove('active');
+      $('no-stream').style.display = '';
+      $('fps-val').textContent = '--';
+      addLog('WebSocket disconnesso', 'wrn');
+    };
+  } catch(e) {
+    addLog('URL non valido: ' + e.message, 'err');
+  }
+}
+
+function disconnect() {
+  if (ws) { ws.close(); ws = null; }
+}
+
+// ── gestione messaggio dal Python ──────────────────────────────
+function handleMessage(raw) {
+  let data;
+  try { data = JSON.parse(raw); } catch { return; }
+
+  const t0 = performance.now();
+
+  // ── Disegna il frame ricevuto dalla ESP32 ──
+  if (data.frame) {
+    const img = new Image();
+    img.onload = () => {
+      // Adatta canvas alle dimensioni reali del frame
+      if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+        canvas.width  = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+      }
+      ctx.drawImage(img, 0, 0);
+      // Nasconde il placeholder solo alla prima immagine
+      $('no-stream').style.display = 'none';
+      $('scan').classList.add('active');
+      setStStatus('on', 'STREAM ON');
+    };
+    img.src = 'data:image/jpeg;base64,' + data.frame;
   }
 
-  // ──────────────── CAMERA ────────────────
-  $('btn-start').addEventListener('click', startCamera);
-  $('btn-stop').addEventListener('click', stopCamera);
-  $('btn-snap').addEventListener('click', sendFrame);
+  // ── FPS e risoluzione ──
+  if (data.fps !== undefined) $('fps-val').textContent = data.fps;
+  if (data.res)               $('res-lbl').textContent = data.res;
 
-  async function startCamera() {
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
-      });
-      video.srcObject = stream;
-      video.onloadedmetadata = () => {
-        overlay.width  = video.videoWidth;
-        overlay.height = video.videoHeight;
-        $('res-label').textContent = `${video.videoWidth} × ${video.videoHeight}`;
-        $('no-camera').style.display = 'none';
-        $('scan-line').classList.add('active');
-      };
-      setCamStatus('online', 'CAMERA ON');
-      $('btn-start').disabled = true;
-      $('btn-stop').disabled  = false;
-      $('btn-snap').disabled  = false;
-      addLog('Camera avviata', 'ok');
-      startFPS();
-      if (ws && ws.readyState === WebSocket.OPEN) startFrameLoop();
-    } catch(e) {
-      addLog('Errore camera: ' + e.message, 'err');
-      setCamStatus('error', 'ERRORE');
-    }
+  // ── Latenza round-trip ──
+  const lat = Math.round(performance.now() - lastFrameTs);
+  lastFrameTs = performance.now();
+  const latStr = lat > 9999 ? '--' : lat + ' ms';
+  $('lat-lbl').textContent = 'Latenza: ' + latStr;
+  $('foot-lat').textContent = 'RTT: ' + latStr;
+
+  // ── Aggiorna stats ──
+  const faces = data.faces || [];
+  stats.frames++;
+  stats.faces += faces.length;
+  stats.known += faces.filter(f => f.recognized).length;
+  stats.unk   += faces.filter(f => !f.recognized).length;
+  $('s-frames').textContent = stats.frames;
+  $('s-faces').textContent  = stats.faces;
+  $('s-known').textContent  = stats.known;
+  $('s-unk').textContent    = stats.unk;
+  $('det-n').textContent    = faces.length;
+
+  // ── Lista rilevamenti ──
+  updateDetList(faces);
+}
+
+function updateDetList(faces) {
+  const list = $('det-list');
+  list.innerHTML = '';
+  if (!faces.length) {
+    list.appendChild($('det-empty') || (() => {
+      const d = document.createElement('div');
+      d.className = 'empty-st'; d.id = 'det-empty';
+      d.textContent = 'Nessun volto rilevato'; return d;
+    })());
+    return;
   }
+  faces.forEach(f => {
+    const conf = Math.round(f.confidence * 100);
+    const type = f.recognized ? 'known' : 'unknown';
+    const el = document.createElement('div');
+    el.className = `det-item ${type}`;
+    el.innerHTML = `
+      <div class="det-name ${type}">${f.name || 'SCONOSCIUTO'}</div>
+      <div class="det-meta">
+        <span>Conf: ${conf}%</span>
+        <span>${f.recognized ? '✓ ID' : '? IGNOTO'}</span>
+        <span>X:${f.centroid?.cx ?? '-'} Y:${f.centroid?.cy ?? '-'}</span>
+      </div>
+      <div class="conf-bar">
+        <div class="conf-fill ${conf < 65 ? 'low' : ''}" style="width:${conf}%"></div>
+      </div>`;
+    list.appendChild(el);
+  });
+}
 
-  function stopCamera() {
-    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    stopFrameLoop();
-    stopFPS();
-    video.srcObject = null;
-    ctx.clearRect(0, 0, overlay.width, overlay.height);
-    $('no-camera').style.display = '';
-    $('scan-line').classList.remove('active');
-    setCamStatus('', 'CAMERA OFF');
-    $('btn-start').disabled = false;
-    $('btn-stop').disabled  = true;
-    $('btn-snap').disabled  = true;
-    $('res-label').textContent = '--- × ---';
-    addLog('Camera fermata', 'warn');
-  }
-
-  function setCamStatus(state, label) {
-    const dot = $('cam-dot');
-    dot.className = 'dot' + (state ? ' ' + state : '');
-    $('cam-label').textContent = label;
-  }
-
-  // ──────────────── FPS ────────────────
-  function startFPS() {
-    fpsTimer = setInterval(() => {
-      $('fps').textContent = fpsCount;
-      fpsCount = 0;
-    }, 1000);
-  }
-  function stopFPS() {
-    clearInterval(fpsTimer);
-    $('fps').textContent = '--';
-  }
-
-  video.addEventListener('timeupdate', () => { fpsCount++; });
-
-  // ──────────────── WEBSOCKET ────────────────
-  $('btn-connect').addEventListener('click', connectWS);
-  $('btn-disconnect').addEventListener('click', disconnectWS);
-
-  function connectWS() {
-    const url = $('ws-url').value.trim();
-    if (!url) return;
-    addLog(`Connessione a ${url}…`, 'info');
-    try {
-      ws = new WebSocket(url);
-
-      ws.onopen = () => {
-        setWsStatus('online', 'CONNESSO');
-        setConnStatus('online', 'WebSocket connesso');
-        $('btn-connect').disabled    = true;
-        $('btn-disconnect').disabled = false;
-        addLog('WebSocket connesso', 'ok');
-        if (stream) startFrameLoop();
-      };
-
-      ws.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          handleResults(data);
-        } catch(err) {
-          addLog('Risposta non valida: ' + err.message, 'err');
-        }
-      };
-
-      ws.onerror = () => {
-        addLog('Errore WebSocket', 'err');
-        setWsStatus('error', 'ERRORE');
-        setConnStatus('error', 'Errore di connessione');
-      };
-
-      ws.onclose = () => {
-        setWsStatus('', 'DISCONNESSO');
-        setConnStatus('', 'Connessione chiusa');
-        $('btn-connect').disabled    = false;
-        $('btn-disconnect').disabled = true;
-        addLog('WebSocket disconnesso', 'warn');
-        stopFrameLoop();
-      };
-    } catch(e) {
-      addLog('URL non valido: ' + e.message, 'err');
-    }
-  }
-
-  function disconnectWS() {
-    if (ws) { ws.close(); ws = null; }
-    stopFrameLoop();
-  }
-
-  function setWsStatus(state, label) {
-    const dot = $('ws-dot');
-    dot.className = 'dot' + (state ? ' ' + state : '');
-    $('ws-label').textContent = label;
-  }
-
-  function setConnStatus(state, msg) {
-    const dot = $('conn-dot');
-    dot.className = 'dot' + (state ? ' ' + state : '');
-    $('conn-msg').textContent = msg;
-  }
-
-  // ──────────────── FRAME LOOP ────────────────
-  function startFrameLoop() {
-    stopFrameLoop();
-    frameTimer = setInterval(sendFrame, sendInterval);
-    addLog('Invio frame avviato', 'ok');
-  }
-
-  function stopFrameLoop() {
-    clearInterval(frameTimer);
-    frameTimer = null;
-  }
-
-  function sendFrame() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    if (!stream) return;
-
-    const tmpCanvas = document.createElement('canvas');
-    tmpCanvas.width  = video.videoWidth  || 640;
-    tmpCanvas.height = video.videoHeight || 480;
-    const tmpCtx = tmpCanvas.getContext('2d');
-    tmpCtx.drawImage(video, 0, 0);
-
-    const t0 = performance.now();
-    tmpCanvas.toBlob(blob => {
-      if (!blob) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const b64 = reader.result.split(',')[1];
-        ws.send(JSON.stringify({
-          type: 'frame',
-          image: b64,
-          timestamp: Date.now()
-        }));
-        stats.frames++;
-        $('stat-frames').textContent = stats.frames;
-        const latency = Math.round(performance.now() - t0);
-        $('latency').textContent = `Latenza: ${latency} ms`;
-      };
-      reader.readAsDataURL(blob);
-    }, 'image/jpeg', 0.7);
-  }
-
-  // ──────────────── RESULTS ────────────────
-  function handleResults(data) {
-    // data = { faces: [{ name, confidence, box: {x,y,w,h}, recognized }] }
-    const faces = data.faces || [];
-
-    // Aggiorna stats
-    stats.faces   += faces.length;
-    stats.known   += faces.filter(f => f.recognized).length;
-    stats.unknown += faces.filter(f => !f.recognized).length;
-    $('stat-faces').textContent   = stats.faces;
-    $('stat-known').textContent   = stats.known;
-    $('stat-unknown').textContent = stats.unknown;
-
-    // Disegna bounding box
-    ctx.clearRect(0, 0, overlay.width, overlay.height);
-    faces.forEach(face => {
-      drawBox(face);
-    });
-
-    // Lista rilevamenti
-    updateResultsList(faces);
-    $('det-count').textContent = faces.length;
-  }
-
-  function drawBox(face) {
-    const b = face.box;
-    if (!b) return;
-    const color = face.recognized ? '#00ff88' : '#ffb800';
-    const conf  = Math.round((face.confidence || 0) * 100);
-
-    ctx.strokeStyle = color;
-    ctx.lineWidth   = 2;
-    ctx.shadowColor = color;
-    ctx.shadowBlur  = 8;
-    ctx.strokeRect(b.x, b.y, b.w, b.h);
-    ctx.shadowBlur  = 0;
-
-    // Corner accents
-    const cs = 12;
-    ctx.strokeStyle = color;
-    ctx.lineWidth   = 3;
-    [[b.x, b.y, 1,1],[b.x+b.w, b.y, -1,1],[b.x, b.y+b.h, 1,-1],[b.x+b.w, b.y+b.h,-1,-1]].forEach(([x,y,dx,dy]) => {
-      ctx.beginPath();
-      ctx.moveTo(x + dx*cs, y);
-      ctx.lineTo(x, y);
-      ctx.lineTo(x, y + dy*cs);
-      ctx.stroke();
-    });
-
-    // Label
-    const label = `${face.name || 'SCONOSCIUTO'}  ${conf}%`;
-    ctx.font = '13px "Share Tech Mono", monospace';
-    const tw = ctx.measureText(label).width;
-    ctx.fillStyle = color + 'cc';
-    ctx.fillRect(b.x, b.y - 22, tw + 12, 20);
-    ctx.fillStyle = '#000';
-    ctx.fillText(label, b.x + 6, b.y - 7);
-  }
-
-  function updateResultsList(faces) {
-    const list = $('results-list');
-    const empty = $('empty-state');
-    list.innerHTML = '';
-
-    if (faces.length === 0) {
-      list.appendChild(empty);
-      return;
-    }
-
-    faces.forEach(face => {
-      const conf = Math.round((face.confidence || 0) * 100);
-      const type = face.recognized ? 'detected' : 'unknown';
-      const item = document.createElement('div');
-      item.className = `result-item ${type}`;
-      item.innerHTML = `
-        <div class="result-name ${type}">${face.name || 'SCONOSCIUTO'}</div>
-        <div class="result-meta">
-          <span>Confidenza: ${conf}%</span>
-          <span>${face.recognized ? '✓ RICONOSCIUTO' : '? SCONOSCIUTO'}</span>
-        </div>
-        <div class="confidence-bar">
-          <div class="confidence-fill ${conf < 60 ? 'low' : ''}" style="width:${conf}%"></div>
-        </div>`;
-      list.appendChild(item);
-    });
-  }
-
-  // ──────────────── INIT ────────────────
-  addLog('Sistema inizializzato', 'ok');
-  addLog('Avvia la camera e connetti il server Python', 'info');
+// ── init ───────────────────────────────────────────────────────
+addLog('Sistema pronto — connetti il server Python', 'ok');
+addLog('Avvia: python face_server.py', 'inf');
 </script>
 </body>
 </html>
+H

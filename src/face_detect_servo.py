@@ -30,7 +30,7 @@ MODEL_PATH = "blaze_face_short_range.tflite"
 MIN_CONFIDENCE   = 0.6
 DETECT_EVERY_N   = 4       # rileva 1 frame su 4
 CENTER_TOLERANCE = 35
-SERVO_STEP       = 3
+SERVO_STEP       = 2
 SEND_INTERVAL    = 0.05    # max 20 comandi servo/sec
 
 # ───────────────── STATE ─────────────────
@@ -160,11 +160,16 @@ def draw_face(frame, x, y, bw, bh, score):
     return cx, cy
 
 # ───────────────── MAIN LOOP (tutto in un thread) ─────────────────
+# ───────────────── MAIN LOOP (tutto in un thread) ─────────────────
 def main_loop(detector):
     fps_buf       = deque(maxlen=30)
     last_time     = time.time()
     frame_counter = 0
     last_faces    = []
+
+    TARGET_FPS = 30
+    FRAME_TIME = 1.0 / TARGET_FPS
+    last_frame_time = time.time()
 
     cv2.namedWindow("Face Tracking", cv2.WINDOW_NORMAL)
 
@@ -176,13 +181,20 @@ def main_loop(detector):
             buf = bytearray()
 
             while not stop_event.is_set():
+
+                # 🔽 FPS LIMIT (MODIFICA PRINCIPALE)
+                now = time.time()
+                if now - last_frame_time < FRAME_TIME:
+                    time.sleep(FRAME_TIME - (now - last_frame_time))
+                    continue
+                last_frame_time = time.time()
+
                 chunk = stream.read(4096)
                 if not chunk:
                     break
 
                 buf.extend(chunk)
 
-                # Estrai tutti i frame disponibili ma mostra solo l'ultimo
                 frames_decoded = []
                 while True:
                     start = buf.find(b'\xff\xd8')
@@ -201,11 +213,9 @@ def main_loop(detector):
                 if not frames_decoded:
                     continue
 
-                # Prendi solo il frame più recente
                 frame = frames_decoded[-1]
                 h, w  = frame.shape[:2]
 
-                # Detection solo ogni N frame
                 frame_counter += 1
                 if frame_counter % DETECT_EVERY_N == 0:
                     rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -221,24 +231,20 @@ def main_loop(detector):
                                 bb.width, bb.height, score
                             ))
 
-                # FPS
                 now = time.time()
                 fps_buf.append(1.0 / max(now - last_time, 1e-6))
                 last_time = now
                 fps = sum(fps_buf) / len(fps_buf)
 
-                # Crosshair centro
                 cv2.line(frame, (w//2 - 30, h//2), (w//2 + 30, h//2), (255,255,255), 1)
                 cv2.line(frame, (w//2, h//2 - 30), (w//2, h//2 + 30), (255,255,255), 1)
 
-                # Disegna e traccia
                 if last_faces:
                     biggest = max(last_faces, key=lambda f: f[2] * f[3])
                     x, y, bw, bh, score = biggest
                     cx, cy = draw_face(frame, x, y, bw, bh, score)
                     track_face(cx, cy, w, h)
 
-                # HUD
                 with serial_lock:
                     serial_ok = serial_conn is not None and serial_conn.is_open
                 serial_status = "SERIAL: OK" if serial_ok else "SERIAL: DISCONNESSA"

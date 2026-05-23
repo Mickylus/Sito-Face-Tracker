@@ -31,7 +31,7 @@ MIN_CONFIDENCE   = 0.6
 DETECT_EVERY_N   = 4       # rileva 1 frame su 4
 CENTER_TOLERANCE = 35
 SERVO_STEP       = 1
-SEND_INTERVAL    = 0.15    # max 20 comandi servo/sec
+SEND_INTERVAL    = 0.3   # max 20 comandi servo/sec
 
 # ───────────────── STATE ─────────────────
 stop_event  = threading.Event()

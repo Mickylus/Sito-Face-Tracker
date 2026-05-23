@@ -2,289 +2,311 @@ import cv2
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-import urllib.request
 import numpy as np
 import threading
-import queue
 import time
-import os
+import urllib.request
 import serial
+import os
 from collections import deque
 
-# ───────────────── CONFIG ─────────────────
+# ─── CONFIG ───────────────────────────────────────────────────────────────────
 ESP32_CAM_IP = "192.168.4.1"
-# 192.168.4.1
-# 10.103.240.79
 STREAM_URL   = f"http://{ESP32_CAM_IP}/stream"
 
-SERIAL_PORT = "/dev/ttyUSB0"
+SERIAL_PORT = "/dev/ttyACM0"
 BAUDRATE    = 115200
 
-MODEL_URL = (
-    "https://storage.googleapis.com/mediapipe-models/"
-    "face_detector/blaze_face_short_range/float16/latest/"
-    "blaze_face_short_range.tflite"
-)
-MODEL_PATH = "blaze_face_short_range.tflite"
+MODEL_PATH = "face.tflite"
+MODEL_URL  = ("https://storage.googleapis.com/mediapipe-models/face_detector/"
+              "blaze_face_short_range/float16/latest/blaze_face_short_range.tflite")
 
-MIN_CONFIDENCE   = 0.6
-DETECT_EVERY_N   = 4       # rileva 1 frame su 4
-CENTER_TOLERANCE = 35
-SERVO_STEP       = 1
-SEND_INTERVAL    = 0.3   # max 20 comandi servo/sec
+# Servo
+PAN_CENTER, TILT_CENTER = 90, 90
+PAN_MIN,  PAN_MAX       = 0, 180
+TILT_MIN, TILT_MAX      = 0, 180
 
-# ───────────────── STATE ─────────────────
-stop_event  = threading.Event()
-pan_angle   = 90
-tilt_angle  = 90
+# PID (tunable)
+PID_KP = 0.04
+PID_KI = 0.001
+PID_KD = 0.008
 
-serial_lock     = threading.Lock()
-serial_conn     = None
-_last_send_time = 0
+CENTER_TOL     = 25    # pixel dead-zone al centro
+DETECT_SKIP    = 4    # esegue detection ogni N frame
+NO_FACE_TIMEOUT = 3.0 # secondi senza volto prima di tornare al centro
 
-# ───────────────── MODEL ─────────────────
-def download_model():
-    if not os.path.exists(MODEL_PATH):
-        print("Download modello...")
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+# Smoothing posizione servo (media mobile)
+SMOOTH_WIN = 5
 
-def make_detector():
-    base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-    options = vision.FaceDetectorOptions(
-        base_options=base_options,
-        min_detection_confidence=MIN_CONFIDENCE,
+# ─── MODEL ────────────────────────────────────────────────────────────────────
+if not os.path.exists(MODEL_PATH):
+    print("Download modello...")
+    urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+
+detector = vision.FaceDetector.create_from_options(
+    vision.FaceDetectorOptions(
+        base_options=python.BaseOptions(model_asset_path=MODEL_PATH),
+        min_detection_confidence=0.55,
+        min_suppression_threshold=0.3,
     )
-    return vision.FaceDetector.create_from_options(options)
+)
 
-# ───────────────── SERIAL ─────────────────
+# ─── SERIAL ───────────────────────────────────────────────────────────────────
+ser = None
+
 def init_serial():
-    global serial_conn
+    global ser
     try:
-        s = serial.Serial(
-            port=SERIAL_PORT,
-            baudrate=BAUDRATE,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            timeout=1,
-            write_timeout=1,
-            xonxoff=False,
-            rtscts=False,
-            dsrdtr=False
-        )
-        s.dtr = False
-        s.rts = False
+        ser = serial.Serial(SERIAL_PORT, BAUDRATE, timeout=1)
         time.sleep(2)
-        s.reset_input_buffer()
-        s.reset_output_buffer()
-        with serial_lock:
-            serial_conn = s
-        print(f"[SERIAL] Connesso a {SERIAL_PORT}")
-        return True
-    except Exception as e:
-        print(f"[SERIAL] Init fallita: {e}")
-        return False
+        print(f"Seriale OK: {SERIAL_PORT}")
+    except serial.SerialException as e:
+        print(f"[WARN] Seriale non disponibile: {e}")
+        ser = None
 
-def reconnect_serial():
-    global serial_conn
-    with serial_lock:
-        if serial_conn:
-            try:
-                serial_conn.close()
-            except:
-                pass
-        serial_conn = None
-    time.sleep(2)
-    return init_serial()
-
-def send_servo_angles(pan, tilt):
-    global serial_conn
-    with serial_lock:
-        if serial_conn is None or not serial_conn.is_open:
-            return
-        try:
-            serial_conn.write(f"{int(pan)},{int(tilt)}\n".encode("ascii"))
-            serial_conn.flush()
-        except serial.SerialTimeoutException:
-            pass
-        except Exception as e:
-            print(f"[SERIAL ERROR] {e}")
-            try:
-                serial_conn.close()
-            except:
-                pass
-            serial_conn = None
-
-def serial_watchdog():
-   if not conn_ok:
-    if serial_conn is None:
-        reconnect_serial()
-
-# ───────────────── TRACKING ─────────────────
-def track_face(cx, cy, frame_w, frame_h):
-    global pan_angle, tilt_angle, _last_send_time
-
-    error_x = cx - frame_w // 2
-    error_y = cy - frame_h // 2
-    changed = False
-
-    if abs(error_x) > CENTER_TOLERANCE:
-        pan_angle += -SERVO_STEP if error_x > 0 else SERVO_STEP
-        changed = True
-    if abs(error_y) > CENTER_TOLERANCE:
-        tilt_angle += SERVO_STEP if error_y > 0 else -SERVO_STEP
-        changed = True
-
-    pan_angle  = max(0, min(180, pan_angle))
-    tilt_angle = max(0, min(180, tilt_angle))
-
-    now = time.time()
-    if changed and (now - _last_send_time) >= SEND_INTERVAL:
-        send_servo_angles(pan_angle, tilt_angle)
-        _last_send_time = now
-
-# ───────────────── DRAW ─────────────────
-def draw_face(frame, x, y, bw, bh, score):
-    cx = x + bw // 2
-    cy = y + bh // 2
-    cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0, 255, 0), 2)
-    cv2.circle(frame, (cx, cy), 6, (0, 0, 255), -1)
-    cv2.line(frame, (cx - 20, cy), (cx + 20, cy), (0, 0, 255), 2)
-    cv2.line(frame, (cx, cy - 20), (cx, cy + 20), (0, 0, 255), 2)
-    cv2.putText(frame, f"{score:.0%}", (x, y - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-    return cx, cy
-
-# ───────────────── MAIN LOOP (tutto in un thread) ─────────────────
-# ───────────────── MAIN LOOP (tutto in un thread) ─────────────────
-def main_loop(detector):
-    fps_buf       = deque(maxlen=30)
-    last_time     = time.time()
-    frame_counter = 0
-    last_faces    = []
-
-    TARGET_FPS = 30
-    FRAME_TIME = 1.0 / TARGET_FPS
-    last_frame_time = time.time()
-
-    cv2.namedWindow("Face Tracking", cv2.WINDOW_NORMAL)
-
-    while not stop_event.is_set():
-        try:
-            print(f"[STREAM] Connessione a {STREAM_URL}")
-            stream = urllib.request.urlopen(STREAM_URL, timeout=10)
-            print("[STREAM] Connesso")
-            buf = bytearray()
-
-            while not stop_event.is_set():
-
-                # 🔽 FPS LIMIT (MODIFICA PRINCIPALE)
-                now = time.time()
-                if now - last_frame_time < FRAME_TIME:
-                    time.sleep(FRAME_TIME - (now - last_frame_time))
-                    continue
-                last_frame_time = time.time()
-
-                chunk = stream.read(4096)
-                if not chunk:
-                    break
-
-                buf.extend(chunk)
-
-                frames_decoded = []
-                while True:
-                    start = buf.find(b'\xff\xd8')
-                    end   = buf.find(b'\xff\xd9', start)
-                    if start == -1 or end == -1:
-                        break
-                    jpg = bytes(buf[start:end + 2])
-                    del buf[:end + 2]
-                    frame = cv2.imdecode(
-                        np.frombuffer(jpg, dtype=np.uint8),
-                        cv2.IMREAD_COLOR
-                    )
-                    if frame is not None:
-                        frames_decoded.append(cv2.flip(frame, -1))
-
-                if not frames_decoded:
-                    continue
-
-                frame = frames_decoded[-1]
-                h, w  = frame.shape[:2]
-
-                frame_counter += 1
-                if frame_counter % DETECT_EVERY_N == 0:
-                    rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                    results  = detector.detect(mp_image)
-                    last_faces = []
-                    if results.detections:
-                        for det in results.detections:
-                            bb    = det.bounding_box
-                            score = det.categories[0].score
-                            last_faces.append((
-                                bb.origin_x, bb.origin_y,
-                                bb.width, bb.height, score
-                            ))
-
-                now = time.time()
-                fps_buf.append(1.0 / max(now - last_time, 1e-6))
-                last_time = now
-                fps = sum(fps_buf) / len(fps_buf)
-
-                cv2.line(frame, (w//2 - 30, h//2), (w//2 + 30, h//2), (255,255,255), 1)
-                cv2.line(frame, (w//2, h//2 - 30), (w//2, h//2 + 30), (255,255,255), 1)
-
-                if last_faces:
-                    biggest = max(last_faces, key=lambda f: f[2] * f[3])
-                    x, y, bw, bh, score = biggest
-                    cx, cy = draw_face(frame, x, y, bw, bh, score)
-                    track_face(cx, cy, w, h)
-
-                with serial_lock:
-                    serial_ok = serial_conn is not None and serial_conn.is_open
-                serial_status = "SERIAL: OK" if serial_ok else "SERIAL: DISCONNESSA"
-                serial_color  = (0, 255, 0) if serial_ok else (0, 0, 255)
-
-                cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                cv2.putText(frame, f"PAN:{pan_angle} TILT:{tilt_angle}", (10, 60),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-                cv2.putText(frame, serial_status, (10, 90),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, serial_color, 2)
-
-                cv2.imshow("Face Tracking", frame)
-
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    stop_event.set()
-                    break
-
-        except Exception as e:
-            print(f"[LOOP ERROR] {e}")
-            time.sleep(1)
-
-    cv2.destroyAllWindows()
-
-# ───────────────── MAIN ─────────────────
-def main():
-    download_model()
-    init_serial()
-
-    detector = make_detector()
-
-    t_watchdog = threading.Thread(target=serial_watchdog, daemon=True)
-    t_watchdog.start()
-
+def send_servo(p: int, t: int):
+    if ser is None:
+        return
     try:
-        main_loop(detector)
-    except KeyboardInterrupt:
-        stop_event.set()
+        ser.write(f"{p},{t}\n".encode())
+        ser.flush()
+    except serial.SerialException:
+        pass  # non blocca il loop principale
 
-    t_watchdog.join(timeout=2)
+init_serial()
 
-    with serial_lock:
-        if serial_conn and serial_conn.is_open:
-            serial_conn.close()
+# ─── SHARED STATE ─────────────────────────────────────────────────────────────
+latest_frame: np.ndarray | None = None
+latest_faces: list               = []
+frame_lock  = threading.Lock()
+faces_lock  = threading.Lock()
+running     = True
 
-if __name__ == "__main__":
-    main()
+# ─── PID CONTROLLER ───────────────────────────────────────────────────────────
+class PID:
+    def __init__(self, kp, ki, kd, out_min=-10.0, out_max=10.0):
+        self.kp, self.ki, self.kd = kp, ki, kd
+        self.out_min, self.out_max = out_min, out_max
+        self._integral  = 0.0
+        self._prev_err  = 0.0
+        self._prev_time = time.monotonic()
+
+    def reset(self):
+        self._integral = 0.0
+        self._prev_err = 0.0
+
+    def update(self, error: float) -> float:
+        now = time.monotonic()
+        dt  = max(now - self._prev_time, 1e-4)
+        self._prev_time = now
+
+        self._integral  = np.clip(
+            self._integral + error * dt, self.out_min / self.ki if self.ki else -1e9, self.out_max / self.ki if self.ki else 1e9
+        )
+        derivative = (error - self._prev_err) / dt
+        self._prev_err = error
+
+        out = self.kp * error + self.ki * self._integral + self.kd * derivative
+        return float(np.clip(out, self.out_min, self.out_max))
+
+pid_pan  = PID(PID_KP, PID_KI, PID_KD, -8, 8)
+pid_tilt = PID(PID_KP, PID_KI, PID_KD, -8, 8)
+
+pan_buf  = deque([PAN_CENTER],  maxlen=SMOOTH_WIN)
+tilt_buf = deque([TILT_CENTER], maxlen=SMOOTH_WIN)
+pan      = PAN_CENTER
+tilt     = TILT_CENTER
+
+# ─── THREAD: STREAM READER (MJPEG manuale — zero buffer lag) ─────────────────
+#
+# cv2.VideoCapture accumula frame in un buffer interno che non si svuota mai
+# abbastanza velocemente → ritardo crescente.
+# Soluzione: leggere lo stream HTTP raw, estrarre i JPEG a mano e tenere
+# SOLO l'ultimo frame disponibile, scartando tutto il resto.
+#
+def stream_reader():
+    global latest_frame, running
+    import urllib.request as urlreq
+
+    BOUNDARY_TAG = b"--frame"
+    SOI          = b"\xff\xd8"   # JPEG Start Of Image
+    EOI          = b"\xff\xd9"   # JPEG End Of Image
+    CHUNK        = 32768         # byte letti per iterazione (32 KB)
+
+    while running:
+        try:
+            req  = urlreq.urlopen(STREAM_URL, timeout=5)
+            print("Stream connesso.")
+            buf  = b""
+
+            while running:
+                buf += req.read(CHUNK)
+
+                # Cerca inizio e fine JPEG nel buffer grezzo
+                start = buf.find(SOI)
+                end   = buf.find(EOI, start + 2) + 2  # +2 per includere EOI
+
+                if start == -1 or end < 2:
+                    # JPEG incompleto — aspetta altri dati
+                    if len(buf) > 200_000:
+                        # Buffer troppo grande senza un JPEG valido → flush
+                        buf = b""
+                    continue
+
+                jpg  = buf[start:end]
+                # Scarta tutto ciò che precede il prossimo potenziale SOI
+                buf  = buf[end:]
+
+                # Decodifica
+                arr   = np.frombuffer(jpg, dtype=np.uint8)
+                frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                if frame is None:
+                    continue
+
+                frame = cv2.flip(frame, -1)
+
+                with frame_lock:
+                    latest_frame = frame
+
+        except Exception as e:
+            print(f"[WARN] Stream interrotto: {e} — riprovo...")
+            time.sleep(2)
+
+# ─── THREAD: FACE DETECTION ───────────────────────────────────────────────────
+def detection_worker():
+    global latest_faces, running
+
+    local_id = 0
+
+    while running:
+
+        with frame_lock:
+            if latest_frame is None:
+                time.sleep(0.01)
+                continue
+            frame = latest_frame.copy()
+
+        local_id += 1
+        if local_id % DETECT_SKIP != 0:
+            time.sleep(0.005)
+            continue
+
+        rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        res      = detector.detect(mp_image)
+
+        faces = []
+        if res.detections:
+            for d in res.detections:
+                bb = d.bounding_box
+                score = d.categories[0].score if d.categories else 0.0
+                faces.append((bb.origin_x, bb.origin_y, bb.width, bb.height, score))
+
+        with faces_lock:
+            latest_faces = faces
+
+# ─── AVVIA THREAD ─────────────────────────────────────────────────────────────
+threading.Thread(target=stream_reader,   daemon=True).start()
+threading.Thread(target=detection_worker, daemon=True).start()
+
+# ─── MAIN LOOP ────────────────────────────────────────────────────────────────
+cv2.namedWindow("cam", cv2.WINDOW_NORMAL)
+
+last_servo_time = 0.0
+last_face_time  = time.monotonic()
+SERVO_HZ = 30  # max frequenza invio comandi seriale
+
+while True:
+
+    with frame_lock:
+        if latest_frame is None:
+            time.sleep(0.01)
+            continue
+        frame = latest_frame.copy()
+
+    h, w = frame.shape[:2]
+    cx_frame, cy_frame = w // 2, h // 2
+
+    with faces_lock:
+        faces = list(latest_faces)
+
+    if faces:
+        last_face_time = time.monotonic()
+
+        # Prendi il volto più grande (più vicino)
+        x, y, bw, bh, score = max(faces, key=lambda f: f[2] * f[3])
+
+        cx = x + bw // 2
+        cy = y + bh // 2
+
+        err_x = cx - cx_frame
+        err_y = cy - cy_frame
+
+        # Dead-zone: non muovere se già centrato
+        if abs(err_x) <= CENTER_TOL:
+            err_x = 0
+            pid_pan.reset()
+        if abs(err_y) <= CENTER_TOL:
+            err_y = 0
+            pid_tilt.reset()
+
+        # PID → delta angolo
+        delta_pan  = -pid_pan.update(err_x)
+        delta_tilt =  pid_tilt.update(err_y)
+
+        pan_raw  = pan  + delta_pan
+        tilt_raw = tilt + delta_tilt
+
+        # Smoothing con media mobile
+        pan_buf.append(np.clip(pan_raw,  PAN_MIN,  PAN_MAX))
+        tilt_buf.append(np.clip(tilt_raw, TILT_MIN, TILT_MAX))
+
+        pan  = int(np.mean(pan_buf))
+        tilt = int(np.mean(tilt_buf))
+
+        # Invia al servo con rate limiting
+        now = time.monotonic()
+        if now - last_servo_time >= 1.0 / SERVO_HZ:
+            send_servo(pan, tilt)
+            last_servo_time = now
+
+        # HUD
+        cv2.rectangle(frame, (x, y), (x+bw, y+bh), (0, 220, 80), 2)
+        cv2.circle(frame, (cx, cy), 5, (0, 60, 255), -1)
+
+        label = f"{score:.0%}  P:{pan}  T:{tilt}"
+        cv2.putText(frame, label, (x, y - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 80), 1, cv2.LINE_AA)
+
+        # Linea dal centro al volto
+        cv2.line(frame, (cx_frame, cy_frame), (cx, cy), (60, 60, 255), 1)
+
+    else:
+        pid_pan.reset()
+        pid_tilt.reset()
+
+        # Nessun volto da troppo tempo → torna al centro gradualmente
+        if time.monotonic() - last_face_time >= NO_FACE_TIMEOUT:
+            pan_buf.append(PAN_CENTER)
+            tilt_buf.append(TILT_CENTER)
+            pan  = int(np.mean(pan_buf))
+            tilt = int(np.mean(tilt_buf))
+
+            now = time.monotonic()
+            if now - last_servo_time >= 1.0 / SERVO_HZ:
+                send_servo(pan, tilt)
+                last_servo_time = now
+
+    # Mirino centrale
+    cv2.line(frame, (cx_frame-20, cy_frame), (cx_frame+20, cy_frame), (200, 200, 200), 1)
+    cv2.line(frame, (cx_frame, cy_frame-20), (cx_frame, cy_frame+20), (200, 200, 200), 1)
+
+    cv2.imshow("cam", frame)
+
+    if cv2.waitKey(1) == ord('q'):
+        running = False
+        break
+
+if ser:
+    ser.close()
+cv2.destroyAllWindows()

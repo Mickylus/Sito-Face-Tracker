@@ -15,7 +15,7 @@ import base64
 from collections import deque
 
 # ─── CONFIGURAZIONE ───────────────────────────────────────────
-ESP32_IP   = "10.103.240.79"
+ESP32_IP   = "192.168.4.1"
 STREAM_URL = f"http://{ESP32_IP}/stream"
 
 WS_HOST = "localhost"   # ascolta su tutte le interfacce

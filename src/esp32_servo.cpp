@@ -4,6 +4,7 @@
 #include "esp_http_server.h"
 #include "img_converters.h"
 #include <ESP32Servo.h>
+#include "soc/rtc_wdt.h"
 
 // ─── MODALITÀ WIFI ───────────────────────────────────────────
 #define WIFI_AP_MODE true
@@ -217,7 +218,7 @@ void setup() {
     Serial.println("Errore camera");
     return;
   }
-
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   // Sensor tuning minimale
   sensor_t* s = esp_camera_sensor_get();
   s->set_framesize(s,    FRAMESIZE_QVGA);

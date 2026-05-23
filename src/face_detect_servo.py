@@ -30,8 +30,8 @@ MODEL_PATH = "blaze_face_short_range.tflite"
 MIN_CONFIDENCE   = 0.6
 DETECT_EVERY_N   = 4       # rileva 1 frame su 4
 CENTER_TOLERANCE = 35
-SERVO_STEP       = 2
-SEND_INTERVAL    = 0.05    # max 20 comandi servo/sec
+SERVO_STEP       = 1
+SEND_INTERVAL    = 0.15    # max 20 comandi servo/sec
 
 # ───────────────── STATE ─────────────────
 stop_event  = threading.Event()
@@ -116,13 +116,9 @@ def send_servo_angles(pan, tilt):
             serial_conn = None
 
 def serial_watchdog():
-    while not stop_event.is_set():
-        time.sleep(3)
-        with serial_lock:
-            conn_ok = serial_conn is not None and serial_conn.is_open
-        if not conn_ok:
-            print("[WATCHDOG] Riconnetto seriale...")
-            reconnect_serial()
+   if not conn_ok:
+    if serial_conn is None:
+        reconnect_serial()
 
 # ───────────────── TRACKING ─────────────────
 def track_face(cx, cy, frame_w, frame_h):

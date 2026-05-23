@@ -15,7 +15,7 @@ import base64
 from collections import deque
 
 # ─── CONFIGURAZIONE ───────────────────────────────────────────
-ESP32_IP   = "10.48.233.79"
+ESP32_IP   = "10.103.240.79"
 STREAM_URL = f"http://{ESP32_IP}/stream"
 
 WS_HOST = "localhost"   # ascolta su tutte le interfacce
@@ -35,6 +35,11 @@ FRAME_QUEUE_SIZE = 2
 # Qualità JPEG del frame spedito al browser (0–100)
 STREAM_JPEG_QUALITY = 60
 # ──────────────────────────────────────────────────────────────
+
+# Opzioni per ribaltare/ruotare il frame ricevuto dalla telecamera
+# Imposta a True per abilitare il ribaltamento orizzontale/verticale
+FLIP_HORIZONTAL = True
+FLIP_VERTICAL   = True
 
 frame_queue  = queue.Queue(maxsize=FRAME_QUEUE_SIZE)
 result_queue = queue.Queue(maxsize=2)
@@ -145,6 +150,15 @@ def mjpeg_reader():
                     )
                     if frame is None:
                         continue
+
+                    # Applica il flip se richiesto (prima che il frame venga messo in coda)
+                    if FLIP_HORIZONTAL and FLIP_VERTICAL:
+                        # entrambe le direzioni: equivalente a rotazione 180°
+                        frame = cv2.flip(frame, -1)
+                    elif FLIP_HORIZONTAL:
+                        frame = cv2.flip(frame, 1)
+                    elif FLIP_VERTICAL:
+                        frame = cv2.flip(frame, 0)
 
                     if frame_queue.full():
                         try:

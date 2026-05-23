@@ -1,3 +1,4 @@
+/*
 #include <Arduino.h>
 #include "esp_camera.h"
 #include <WiFi.h>
@@ -221,3 +222,4 @@ void loop() {
   // delay alto per non sprecare CPU
   delay(10000);
 }
+*/

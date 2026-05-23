@@ -1,3 +1,4 @@
+/*
 #include <Arduino.h>
 #include "esp_camera.h"
 #include "esp_timer.h"
@@ -117,3 +118,4 @@ void loop() {
   // piccola pausa cooperativa (0 = yield)
   delay(0);
 }
+*/

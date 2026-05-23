@@ -8,13 +8,25 @@
 #include "freertos/task.h"
 #include <ESP32Servo.h>
 
-// ─── CONFIGURAZIONE WIFI ─────────────────────────────────────
-const char* ssid     = "espcam_SVC";
-const char* password = "SVCCAM32";
+// ─── MODALITÀ WIFI ───────────────────────────────────────────
+// true  = AP mode:  l'ESP32 crea la propria rete WiFi
+// false = STA mode: l'ESP32 si connette a una rete esistente
+#define WIFI_AP_MODE true
+
+// ─── CONFIGURAZIONE STA (client) ─────────────────────────────
+const char* sta_ssid     = "espcam_SVC";
+const char* sta_password = "SVCCAM32";
+
+// ─── CONFIGURAZIONE AP (access point) ────────────────────────
+const char* ap_ssid     = "ESPCAM_SVC";
+const char* ap_password = "12345678";
+const IPAddress ap_ip(192, 168, 4, 1);
+const IPAddress ap_gateway(192, 168, 4, 1);
+const IPAddress ap_subnet(255, 255, 255, 0);
 
 // ─── SERVO CONFIG ────────────────────────────────────────────
-#define PAN_SERVO_PIN   19
-#define TILT_SERVO_PIN  18
+#define PAN_SERVO_PIN   32
+#define TILT_SERVO_PIN  33
 
 Servo servoPan;
 Servo servoTilt;
@@ -63,49 +75,25 @@ static esp_err_t stream_handler(httpd_req_t* req) {
   char len_buf[16];
 
   res = httpd_resp_set_type(req, STREAM_CONTENT_TYPE);
-
-  if (res != ESP_OK)
-    return res;
+  if (res != ESP_OK) return res;
 
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
   httpd_resp_set_hdr(req, "X-Framerate", "60");
 
   while (true) {
-
     fb = esp_camera_fb_get();
-
     if (!fb) {
       Serial.println("Frame fallito");
       continue;
     }
 
-    size_t llen = snprintf(
-      len_buf,
-      sizeof(len_buf),
-      "%u\r\n\r\n",
-      fb->len
-    );
+    size_t llen = snprintf(len_buf, sizeof(len_buf), "%u\r\n\r\n", fb->len);
 
     if (
-      httpd_resp_send_chunk(
-        req,
-        STREAM_BOUNDARY,
-        strlen(STREAM_BOUNDARY)
-      ) != ESP_OK ||
-
-      httpd_resp_send_chunk(
-        req,
-        len_buf,
-        llen
-      ) != ESP_OK ||
-
-      httpd_resp_send_chunk(
-        req,
-        (const char*)fb->buf,
-        fb->len
-      ) != ESP_OK
+      httpd_resp_send_chunk(req, STREAM_BOUNDARY, strlen(STREAM_BOUNDARY)) != ESP_OK ||
+      httpd_resp_send_chunk(req, len_buf, llen)                            != ESP_OK ||
+      httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len)            != ESP_OK
     ) {
-
       esp_camera_fb_return(fb);
       break;
     }
@@ -121,18 +109,14 @@ static esp_err_t stream_handler(httpd_req_t* req) {
 static esp_err_t capture_handler(httpd_req_t* req) {
 
   camera_fb_t* fb = esp_camera_fb_get();
-
   if (!fb) {
     httpd_resp_send_500(req);
     return ESP_FAIL;
   }
 
   httpd_resp_set_type(req, "image/jpeg");
-
   httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-
   httpd_resp_send(req, (const char*)fb->buf, fb->len);
-
   esp_camera_fb_return(fb);
 
   return ESP_OK;
@@ -143,38 +127,68 @@ static esp_err_t capture_handler(httpd_req_t* req) {
 void startCameraServer() {
 
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-
   config.server_port      = 80;
   config.ctrl_port        = 32768;
   config.max_uri_handlers = 4;
   config.stack_size       = 8192;
 
-  httpd_uri_t stream_uri = {
-    "/stream",
-    HTTP_GET,
-    stream_handler,
-    NULL
-  };
-
-  httpd_uri_t capture_uri = {
-    "/capture",
-    HTTP_GET,
-    capture_handler,
-    NULL
-  };
+  httpd_uri_t stream_uri  = { "/stream",  HTTP_GET, stream_handler,  NULL };
+  httpd_uri_t capture_uri = { "/capture", HTTP_GET, capture_handler, NULL };
 
   if (httpd_start(&stream_httpd, &config) == ESP_OK) {
-
-    httpd_register_uri_handler(
-      stream_httpd,
-      &stream_uri
-    );
-
-    httpd_register_uri_handler(
-      stream_httpd,
-      &capture_uri
-    );
+    httpd_register_uri_handler(stream_httpd, &stream_uri);
+    httpd_register_uri_handler(stream_httpd, &capture_uri);
   }
+}
+
+
+// ─── INIT WIFI ───────────────────────────────────────────────
+void initWiFi() {
+
+#if WIFI_AP_MODE
+  // ── ACCESS POINT ──
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(ap_ip, ap_gateway, ap_subnet);
+  WiFi.softAP(ap_ssid, ap_password);
+
+  Serial.println("─────────────────────────────");
+  Serial.println("Modalità: ACCESS POINT");
+  Serial.print("SSID:     ");
+  Serial.println(ap_ssid);
+  Serial.print("Password: ");
+  Serial.println(ap_password);
+  Serial.print("IP:       http://");
+  Serial.println(WiFi.softAPIP());
+  Serial.print("STREAM:   http://");
+  Serial.print(WiFi.softAPIP());
+  Serial.println("/stream");
+  Serial.println("─────────────────────────────");
+
+#else
+  // ── STATION (client) ──
+  WiFi.mode(WIFI_STA);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  WiFi.begin(sta_ssid, sta_password);
+
+  Serial.print("Connessione a ");
+  Serial.print(sta_ssid);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("─────────────────────────────");
+  Serial.println("Modalità: STATION");
+  Serial.print("IP:     http://");
+  Serial.println(WiFi.localIP());
+  Serial.print("STREAM: http://");
+  Serial.print(WiFi.localIP());
+  Serial.println("/stream");
+  Serial.println("─────────────────────────────");
+
+#endif
 }
 
 
@@ -190,15 +204,8 @@ void handleSerialServo() {
       int commaIndex = serialBuffer.indexOf(',');
 
       if (commaIndex > 0) {
-
-        String panStr =
-          serialBuffer.substring(0, commaIndex);
-
-        String tiltStr =
-          serialBuffer.substring(commaIndex + 1);
-
-        int newPan  = constrain(panStr.toInt(), 0, 180);
-        int newTilt = constrain(tiltStr.toInt(), 0, 180);
+        int newPan  = constrain(serialBuffer.substring(0, commaIndex).toInt(), 0, 180);
+        int newTilt = constrain(serialBuffer.substring(commaIndex + 1).toInt(), 0, 180);
 
         panAngle  = newPan;
         tiltAngle = newTilt;
@@ -206,22 +213,14 @@ void handleSerialServo() {
         servoPan.write(panAngle);
         servoTilt.write(tiltAngle);
 
-        Serial.printf(
-          "PAN=%d  TILT=%d\n",
-          panAngle,
-          tiltAngle
-        );
+        Serial.printf("PAN=%d  TILT=%d\n", panAngle, tiltAngle);
       }
 
       serialBuffer = "";
-    }
 
-    else {
-
+    } else {
       serialBuffer += c;
-
-      if (serialBuffer.length() > 32)
-        serialBuffer = "";
+      if (serialBuffer.length() > 32) serialBuffer = "";
     }
   }
 }
@@ -231,22 +230,9 @@ void handleSerialServo() {
 void setup() {
 
   Serial.begin(115200);
-
   Serial.setDebugOutput(false);
 
-  // ─── SERVO INIT ────────────────────────────────────────────
-  servoPan.setPeriodHertz(50);
-  servoTilt.setPeriodHertz(50);
-
-  servoPan.attach(PAN_SERVO_PIN, 500, 2400);
-  servoTilt.attach(TILT_SERVO_PIN, 500, 2400);
-
-  servoPan.write(panAngle);
-  servoTilt.write(tiltAngle);
-
-  delay(500);
-
-  // ─── CAMERA CONFIG ─────────────────────────────────────────
+  // ─── 1. CAMERA ─────────────────────────────────────────────
   camera_config_t config;
 
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -273,83 +259,57 @@ void setup() {
   config.pin_reset = RESET_GPIO_NUM;
 
   config.xclk_freq_hz = 20000000;
-
   config.pixel_format = PIXFORMAT_JPEG;
-
   config.frame_size   = FRAMESIZE_VGA;
   config.jpeg_quality = 8;
   config.fb_count     = 3;
-
-  config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.grab_mode   = CAMERA_GRAB_LATEST;
+  config.fb_location  = CAMERA_FB_IN_PSRAM;
+  config.grab_mode    = CAMERA_GRAB_LATEST;
 
   esp_err_t err = esp_camera_init(&config);
-
   if (err != ESP_OK) {
-
-    Serial.printf(
-      "Errore camera: 0x%x\n",
-      err
-    );
-
+    Serial.printf("Errore camera: 0x%x\n", err);
     return;
   }
 
   // ─── SENSOR TUNING ─────────────────────────────────────────
   sensor_t* s = esp_camera_sensor_get();
-
-  s->set_framesize(s, FRAMESIZE_VGA);
+  s->set_framesize(s, FRAMESIZE_QVGA);
   s->set_quality(s, 8);
-
   s->set_brightness(s, 1);
   s->set_contrast(s, 1);
   s->set_saturation(s, 0);
-
   s->set_sharpness(s, 2);
   s->set_denoise(s, 1);
-
   s->set_exposure_ctrl(s, 1);
   s->set_aec2(s, 1);
   s->set_ae_level(s, 0);
   s->set_aec_value(s, 300);
-
   s->set_whitebal(s, 1);
   s->set_awb_gain(s, 1);
-
   s->set_gain_ctrl(s, 1);
-
   s->set_hmirror(s, 0);
   s->set_vflip(s, 0);
 
-  // ─── WIFI ──────────────────────────────────────────────────
-  WiFi.mode(WIFI_STA);
-
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
-
-  WiFi.begin(ssid, password);
-
-  Serial.print("Connessione WiFi");
-
-  while (WiFi.status() != WL_CONNECTED) {
-
-    delay(300);
-    Serial.print(".");
-  }
-
-  Serial.println();
-
-  Serial.println("─────────────────────────────");
-
-  Serial.print("IP: http://");
-  Serial.println(WiFi.localIP());
-
-  Serial.print("STREAM: http://");
-  Serial.print(WiFi.localIP());
-  Serial.println("/stream");
-
-  Serial.println("─────────────────────────────");
-
+  // ─── 2. WIFI ───────────────────────────────────────────────
+  initWiFi();
   startCameraServer();
+  Serial.println("Camera e WiFi pronti");
+
+  // ─── 3. SERVO ──────────────────────────────────────────────
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
+
+  servoPan.setPeriodHertz(50);
+  servoTilt.setPeriodHertz(50);
+
+  servoPan.attach(PAN_SERVO_PIN, 500, 2400);
+  servoTilt.attach(TILT_SERVO_PIN, 500, 2400);
+
+  servoPan.write(panAngle);
+  servoTilt.write(tiltAngle);
+
+  delay(500);
 
   Serial.println("Sistema pronto");
 }
@@ -357,8 +317,6 @@ void setup() {
 
 // ─── LOOP ────────────────────────────────────────────────────
 void loop() {
-
   handleSerialServo();
-
   delay(2);
 }

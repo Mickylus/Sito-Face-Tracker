@@ -1,3 +1,4 @@
+/*
 #include <Arduino.h>
 #include "esp_camera.h"
 #include <WiFi.h>
@@ -7,12 +8,20 @@
 #include "freertos/semphr.h"
 
 // ─── WIFI ─────────────────────────────
-const char* ap_ssid     = "ESPCAM_SVC";
-const char* ap_password = "12345678";
 
-IPAddress ap_ip(192,168,4,1);
-IPAddress ap_gateway(192,168,4,1);
-IPAddress ap_subnet(255,255,255,0);
+// — Modalità STA: prova a connettersi all'hotspot iPhone —
+const char* sta_ssid     = "Diego-WIFI";
+const char* sta_password = "Manukitty1632";        // ← cambia con la password hotspot
+#define STA_TIMEOUT_MS   10000               // ms prima di rinunciare e usare AP
+
+// — Modalità AP: fallback se l'iPhone non è disponibile —
+const char* ap_ssid      = "ESPCAM_SVC";
+const char* ap_password  = "12345678";
+IPAddress   ap_ip(192,168,4,1);
+IPAddress   ap_gateway(192,168,4,1);
+IPAddress   ap_subnet(255,255,255,0);
+
+bool connected_as_sta = false;
 
 // ─── CAMERA PINS ──────────────────────
 #define PWDN_GPIO_NUM  -1
@@ -33,20 +42,17 @@ IPAddress ap_subnet(255,255,255,0);
 #define PCLK_GPIO_NUM  22
 
 // ─── STREAM ───────────────────────────
-#define BOUNDARY        "frame"
-#define PART_HEADER     "\r\n--" BOUNDARY "\r\nContent-Type: image/jpeg\r\n\r\n"
-#define MAX_CLIENTS     2       // più client = meno banda per ognuno
+#define BOUNDARY    "frame"
+#define PART_HEADER "\r\n--" BOUNDARY "\r\nContent-Type: image/jpeg\r\n\r\n"
+#define MAX_CLIENTS 2
 
 httpd_handle_t server = NULL;
-
-// Semaforo per limitare l'accesso alla camera a un solo client alla volta
 static SemaphoreHandle_t cam_sem = NULL;
 
 static esp_err_t stream_handler(httpd_req_t *req) {
 
-    // Acquisisce il semaforo: se un altro client sta già streamando, rifiuta
     if (xSemaphoreTake(cam_sem, pdMS_TO_TICKS(500)) != pdTRUE) {
-        
+       
         return ESP_FAIL;
     }
 
@@ -55,7 +61,6 @@ static esp_err_t stream_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "multipart/x-mixed-replace;boundary=" BOUNDARY);
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_set_hdr(req, "X-Framerate", "25");
-    // Il timeout di invio è gestito da send_wait_timeout nella config del server
 
     char part[64];
     const int part_len = snprintf(part, sizeof(part), PART_HEADER);
@@ -63,27 +68,17 @@ static esp_err_t stream_handler(httpd_req_t *req) {
     while (true) {
 
         camera_fb_t *fb = esp_camera_fb_get();
-        if (!fb) {
-            // Camera momentaneamente non disponibile, riprova subito
-            vTaskDelay(1);
-            continue;
-        }
+        if (!fb) { vTaskDelay(1); continue; }
 
-        // Invia header del chunk
         res = httpd_resp_send_chunk(req, part, part_len);
-        if (res != ESP_OK) {
-            esp_camera_fb_return(fb);
-            break;
-        }
+        if (res != ESP_OK) { esp_camera_fb_return(fb); break; }
 
-        // Invia JPEG
         res = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
-        esp_camera_fb_return(fb);  // restituisce subito il buffer
+        esp_camera_fb_return(fb);
 
         if (res != ESP_OK) break;
 
-        // ~25 FPS: dà respiro al WiFi stack ed evita che il buffer TCP si intasi
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(20));  // ~25 FPS
     }
 
     xSemaphoreGive(cam_sem);
@@ -93,16 +88,14 @@ static esp_err_t stream_handler(httpd_req_t *req) {
 // ─── SERVER ───────────────────────────
 void startServer() {
 
-    httpd_config_t config   = HTTPD_DEFAULT_CONFIG();
-    config.server_port      = 80;
-    config.max_open_sockets = MAX_CLIENTS + 1;  // +1 per il socket di ascolto
-    config.lru_purge_enable = true;
+    httpd_config_t config    = HTTPD_DEFAULT_CONFIG();
+    config.server_port       = 80;
+    config.max_open_sockets  = MAX_CLIENTS + 1;
+    config.lru_purge_enable  = true;
     config.recv_wait_timeout = 10;
     config.send_wait_timeout = 10;
-    // Stack più grande per gestire lo streaming senza overflow
-    config.stack_size       = 8192;
-    // Priorità bassa: la camera task ha la precedenza
-    config.task_priority    = tskIDLE_PRIORITY + 1;
+    config.stack_size        = 8192;
+    config.task_priority     = tskIDLE_PRIORITY + 1;
 
     httpd_uri_t uri = {
         .uri      = "/stream",
@@ -122,23 +115,43 @@ void startServer() {
 // ─── WIFI ─────────────────────────────
 void initWiFi() {
 
-    WiFi.mode(WIFI_AP);
-    WiFi.softAPConfig(ap_ip, ap_gateway, ap_subnet);
-    WiFi.softAP(ap_ssid, ap_password);
-    WiFi.setTxPower(WIFI_POWER_19_5dBm);
+    // 1) Prova a connettersi all'iPhone
+    Serial.printf("Connessione a \"%s\"...\n", sta_ssid);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(sta_ssid, sta_password);
 
-    Serial.print("AP IP: ");
-    Serial.println(WiFi.softAPIP());
+    unsigned long t0 = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < STA_TIMEOUT_MS) {
+        delay(250);
+        Serial.print(".");
+    }
+    Serial.println();
+
+    if (WiFi.status() == WL_CONNECTED) {
+        // Connesso all'iPhone ✅
+        connected_as_sta = true;
+        WiFi.setTxPower(WIFI_POWER_19_5dBm);
+        Serial.print("Connesso! IP: ");
+        Serial.println(WiFi.localIP());
+
+    } else {
+        // Fallback: crea AP proprio
+        Serial.println("iPhone non trovato — avvio AP di fallback.");
+        WiFi.mode(WIFI_AP);
+        WiFi.softAPConfig(ap_ip, ap_gateway, ap_subnet);
+        WiFi.softAP(ap_ssid, ap_password);
+        WiFi.setTxPower(WIFI_POWER_19_5dBm);
+        Serial.print("AP IP: ");
+        Serial.println(WiFi.softAPIP());
+    }
 }
 
 // ─── CAMERA ───────────────────────────
 bool initCamera() {
 
     camera_config_t config;
-
     config.ledc_channel = LEDC_CHANNEL_0;
     config.ledc_timer   = LEDC_TIMER_0;
-
     config.pin_d0    = Y2_GPIO_NUM;
     config.pin_d1    = Y3_GPIO_NUM;
     config.pin_d2    = Y4_GPIO_NUM;
@@ -158,13 +171,11 @@ bool initCamera() {
 
     config.xclk_freq_hz = 20000000;
     config.pixel_format = PIXFORMAT_JPEG;
-
-    // 2 frame buffer: mentre uno viene inviato, l'altro viene catturato
-    config.frame_size   = FRAMESIZE_QVGA;  // 320×240 — ottimo per latenza/qualità
-    config.jpeg_quality = 10;              // 0=max 63=min — 10 è un buon compromesso
+    config.frame_size   = FRAMESIZE_QVGA;
+    config.jpeg_quality = 10;
     config.fb_count     = 2;
-    config.fb_location  = CAMERA_FB_IN_PSRAM;  // usa PSRAM se disponibile
-    config.grab_mode    = CAMERA_GRAB_LATEST;  // ⬅️ scarica sempre il frame più recente
+    config.fb_location  = CAMERA_FB_IN_PSRAM;
+    config.grab_mode    = CAMERA_GRAB_LATEST;
 
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
@@ -174,7 +185,6 @@ bool initCamera() {
 
     sensor_t *s = esp_camera_sensor_get();
     s->set_framesize(s, FRAMESIZE_QVGA);
-    // Riduce il gain e aumenta la nitidezza
     s->set_gainceiling(s, GAINCEILING_4X);
     s->set_sharpness(s, 2);
     s->set_denoise(s, 1);
@@ -189,7 +199,7 @@ void setup() {
     Serial.println("\n=== ESP32-CAM Stream ===");
 
     cam_sem = xSemaphoreCreateBinary();
-    xSemaphoreGive(cam_sem);  // disponibile da subito
+    xSemaphoreGive(cam_sem);
 
     if (!initCamera()) {
         Serial.println("Riavvio tra 3 secondi...");
@@ -200,16 +210,27 @@ void setup() {
     initWiFi();
     startServer();
 
-    Serial.printf("Stream: http://%s/stream\n", WiFi.softAPIP().toString().c_str());
+    IPAddress ip = connected_as_sta ? WiFi.localIP() : WiFi.softAPIP();
+    Serial.printf("Stream: http://%s/stream\n", ip.toString().c_str());
 }
 
 // ─── LOOP ─────────────────────────────
 void loop() {
-    // Watchdog leggero: se il server è crashato, riavvia
+
+    // Se eravamo in STA e perdiamo la connessione → riavvia per ritentare
+    if (connected_as_sta && WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi perso — riavvio...");
+        delay(1000);
+        ESP.restart();
+    }
+
     if (server == NULL) {
         Serial.println("Server NULL — riavvio...");
         delay(1000);
         ESP.restart();
     }
-    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    vTaskDelay(pdMS_TO_TICKS(2000));
 }
+
+*/

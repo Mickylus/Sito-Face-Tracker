@@ -14,12 +14,14 @@ from collections import deque
 ESP32_IP   = "10.42.0.184"
 STREAM_URL = f"http://{ESP32_IP}/stream"
 
-SERIAL_PORT = "/dev/ttyUSB1"
+SERIAL_PORT = "/dev/ttyUSB0"
 BAUDRATE    = 115200
 
 MODEL_PATH = "face.tflite"
 MODEL_URL  = ("https://storage.googleapis.com/mediapipe-models/face_detector/"
               "blaze_face_short_range/float16/latest/blaze_face_short_range.tflite")
+
+IMAGE_ROTATION = -2
 
 # Servo
 PAN_CENTER,  TILT_CENTER = 90, 90
@@ -158,6 +160,11 @@ def stream_reader():
 
                 if frame is None:
                     continue
+
+                if IMAGE_ROTATION != 0:
+                    fh, fw = frame.shape[:2]
+                    M = cv2.getRotationMatrix2D((fw / 2, fh / 2), IMAGE_ROTATION, 1.0)
+                    frame = cv2.warpAffine(frame, M, (fw, fh))
 
                 frame = cv2.flip(frame, -1)
                 with frame_lock:

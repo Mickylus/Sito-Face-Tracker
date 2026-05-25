@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import urllib.request
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -7,15 +8,13 @@ import threading
 import time
 import serial
 import os
-import urllib.request
 from collections import deque
-import websocket
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
-ESP32_IP  = "192.168.0.128"   # ← IP dell'ESP32
-WS_URL    = f"ws://{ESP32_IP}/ws"
+ESP32_IP   = "10.42.0.184"
+STREAM_URL = f"http://{ESP32_IP}/stream"
 
-SERIAL_PORT = "/dev/ttyACM0"
+SERIAL_PORT = "/dev/ttyUSB1"
 BAUDRATE    = 115200
 
 MODEL_PATH = "face.tflite"
@@ -27,22 +26,16 @@ PAN_CENTER,  TILT_CENTER = 90, 90
 PAN_MIN,     PAN_MAX     = 0, 180
 TILT_MIN,    TILT_MAX    = 0, 180
 
-# ─── VELOCITÀ SERVO ──────────────────────────────────────────────────────────
-# Unico parametro da toccare: 0.0 = fermo, 1.0 = massima velocità
-SERVO_SPEED = 0.5
+# PID
+PID_KP = 0.04
+PID_KI = 0.001
+PID_KD = 0.008
 
-# I parametri sotto vengono calcolati automaticamente da SERVO_SPEED
-# (non serve modificarli manualmente)
-PID_KP = 0.01 + 0.07  * SERVO_SPEED   # reattività proporzionale
-PID_KI = 0.0  + 0.002 * SERVO_SPEED   # correzione errore accumulato
-PID_KD = 0.0  + 0.016 * SERVO_SPEED   # smorzamento oscillazioni
-SMOOTH_WIN      = max(2, int(14 - 12 * SERVO_SPEED))  # 14=lento 2=veloce
-CENTER_TOL      = int(50 - 30 * SERVO_SPEED)          # 50=lento 20=veloce
-
-CENTER_TOL      = max(10, CENTER_TOL)
-NO_FACE_TIMEOUT = 3.0
-DETECT_SKIP     = 4
-SERVO_HZ        = 30
+CENTER_TOL      = 25   # pixel dead-zone
+DETECT_SKIP     = 4    # detection ogni N frame
+NO_FACE_TIMEOUT = 3.0  # secondi prima di tornare al centro
+SMOOTH_WIN      = 15  # finestra media mobile servo
+SERVO_HZ        = 30   # max comandi seriale al secondo
 
 # ─── MODEL ────────────────────────────────────────────────────────────────────
 if not os.path.exists(MODEL_PATH):
@@ -84,8 +77,8 @@ class PID:
     def __init__(self, kp, ki, kd, out_min=-8.0, out_max=8.0):
         self.kp, self.ki, self.kd = kp, ki, kd
         self.out_min, self.out_max = out_min, out_max
-        self._integral  = 0.0
-        self._prev_err  = 0.0
+        self._integral = 0.0
+        self._prev_err = 0.0
         self._prev_time = time.monotonic()
 
     def reset(self):
@@ -123,44 +116,55 @@ frame_lock   = threading.Lock()
 faces_lock   = threading.Lock()
 running      = True
 
-# ─── WEBSOCKET READER ─────────────────────────────────────────────────────────
-# Ogni messaggio binario dal server è un JPEG completo → nessun parsing,
-# nessun buffer, nessun lag. Il server pusha il frame non appena è pronto.
-def on_message(ws_app, message):
-    global latest_frame
-    arr   = np.frombuffer(message, dtype=np.uint8)
-    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    if frame is None:
-        return
-    frame = cv2.flip(frame, -1)
-    with frame_lock:
-        latest_frame = frame
+# ─── STREAM READER ────────────────────────────────────────────────────────────
+# Stesso approccio byte-per-byte che funziona — wrapped in thread con reconnect
+SOI = b"\xff\xd8"
+EOI = b"\xff\xd9"
 
-def on_error(ws_app, error):
-    print(f"[WS] Errore: {error}")
+def stream_reader():
+    global latest_frame, running
 
-def on_close(ws_app, code, msg):
-    print("[WS] Connessione chiusa — riconnessione...")
-
-def on_open(ws_app):
-    print(f"[WS] Connesso a {WS_URL}")
-
-def ws_reader():
-    global running
     while running:
         try:
-            app = websocket.WebSocketApp(
-                WS_URL,
-                on_open=on_open,
-                on_message=on_message,
-                on_error=on_error,
-                on_close=on_close,
-            )
-            # run_forever si blocca finché la connessione è aperta
-            app.run_forever(ping_interval=10, ping_timeout=5)
+            print(f"Connessione a {STREAM_URL} ...")
+            stream = urllib.request.urlopen(STREAM_URL, timeout=30)
+            print("Stream connesso.")
+            buf = b""
+
+            while running:
+                # Cerca SOI
+                while True:
+                    b1 = stream.read(1)
+                    if b1 == b"\xff":
+                        b2 = stream.read(1)
+                        if b2 == b"\xd8":
+                            buf = SOI
+                            break
+
+                # Leggi fino a EOI
+                while True:
+                    b1 = stream.read(1)
+                    buf += b1
+                    if b1 == b"\xff":
+                        b2 = stream.read(1)
+                        buf += b2
+                        if b2 == b"\xd9":
+                            break
+
+                frame = cv2.imdecode(
+                    np.frombuffer(buf, dtype=np.uint8), cv2.IMREAD_COLOR
+                )
+                buf = b""
+
+                if frame is None:
+                    continue
+
+                frame = cv2.flip(frame, -1)
+                with frame_lock:
+                    latest_frame = frame
+
         except Exception as e:
-            print(f"[WS] Eccezione: {e}")
-        if running:
+            print(f"[WARN] Stream interrotto: {e} — riprovo...")
             time.sleep(2)
 
 # ─── FACE DETECTION ───────────────────────────────────────────────────────────
@@ -195,7 +199,7 @@ def detection_worker():
             latest_faces = faces
 
 # ─── AVVIA THREAD ─────────────────────────────────────────────────────────────
-threading.Thread(target=ws_reader,        daemon=True).start()
+threading.Thread(target=stream_reader,    daemon=True).start()
 threading.Thread(target=detection_worker, daemon=True).start()
 
 # ─── MAIN LOOP ────────────────────────────────────────────────────────────────
@@ -236,7 +240,7 @@ while True:
             pid_tilt.reset()
 
         pan_buf.append(np.clip(pan  + (-pid_pan.update(err_x)),  PAN_MIN,  PAN_MAX))
-        tilt_buf.append(np.clip(tilt + pid_tilt.update(err_y),   TILT_MIN, TILT_MAX))
+        tilt_buf.append(np.clip(tilt - pid_tilt.update(err_y), TILT_MIN, TILT_MAX))
         pan  = int(np.mean(pan_buf))
         tilt = int(np.mean(tilt_buf))
 

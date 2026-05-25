@@ -1,17 +1,17 @@
+/*
 #include <Arduino.h>
 #include "esp_camera.h"
 #include <WiFi.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
+#include "esp_http_server.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
 // ─── WIFI ─────────────────────────────
-bool STA_MODE = false;
+
 // — STA: prova a connettersi al router —
-const char* sta_ssid     = "Diego-WIFI";       // ← cambia
-const char* sta_password = "Manukitty1632";   // ← cambia
+const char* sta_ssid     = "TUO_WIFI";       // ← cambia
+const char* sta_password = "TUA_PASSWORD";   // ← cambia
 #define STA_TIMEOUT_MS   10000
 
 // — AP: fallback —
@@ -41,51 +41,102 @@ bool connected_as_sta = false;
 #define HREF_GPIO_NUM  23
 #define PCLK_GPIO_NUM  22
 
-// ─── WEBSOCKET SERVER ─────────────────
-AsyncWebServer server(80);
-AsyncWebSocket ws("/ws");
+// ─── STREAM ───────────────────────────
+#define BOUNDARY    "frame"
+#define PART_HEADER "\r\n--" BOUNDARY "\r\nContent-Type: image/jpeg\r\n\r\n"
+#define MAX_CLIENTS 2
 
-// Task handle per il loop di streaming
-TaskHandle_t stream_task_handle = NULL;
+httpd_handle_t server = NULL;
+static SemaphoreHandle_t cam_sem = NULL;
 
-// ─── STREAM TASK ──────────────────────
-// Gira su Core 0, invia frame a tutti i client WebSocket connessi
-void stream_task(void* arg) {
+static esp_err_t stream_handler(httpd_req_t *req) {
 
-    for (;;) {
+    if (xSemaphoreTake(cam_sem, pdMS_TO_TICKS(500)) != pdTRUE) {
+        return ESP_FAIL;
+    }
 
-        // Nessun client connesso → aspetta
-        if (ws.count() == 0) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
-        }
+    esp_err_t res = ESP_OK;
 
-        camera_fb_t* fb = esp_camera_fb_get();
-        if (!fb) {
-            vTaskDelay(1);
-            continue;
-        }
+    httpd_resp_set_type(req, "multipart/x-mixed-replace;boundary=" BOUNDARY);
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 
-        // Invia il JPEG come messaggio binario a tutti i client
-        ws.binaryAll((uint8_t*)fb->buf, fb->len);
+    char part[64];
+    const int part_len = snprintf(part, sizeof(part), PART_HEADER);
 
+    while (true) {
+
+        camera_fb_t *fb = esp_camera_fb_get();
+        if (!fb) { vTaskDelay(1); continue; }
+
+        res = httpd_resp_send_chunk(req, part, part_len);
+        if (res != ESP_OK) { esp_camera_fb_return(fb); break; }
+
+        res = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
         esp_camera_fb_return(fb);
 
-        // ~25 FPS
-        vTaskDelay(pdMS_TO_TICKS(20));
+        if (res != ESP_OK) break;
+
+        vTaskDelay(pdMS_TO_TICKS(20));  // ~25 FPS
+    }
+
+    xSemaphoreGive(cam_sem);
+    return res;
+}
+
+// ─── SERVER ───────────────────────────
+void startServer() {
+
+    httpd_config_t config    = HTTPD_DEFAULT_CONFIG();
+    config.server_port       = 80;
+    config.max_open_sockets  = MAX_CLIENTS + 1;
+    config.lru_purge_enable  = true;
+    config.recv_wait_timeout = 10;
+    config.send_wait_timeout = 10;
+    config.stack_size        = 8192;
+    config.task_priority     = tskIDLE_PRIORITY + 1;
+
+    httpd_uri_t uri = {
+        .uri      = "/stream",
+        .method   = HTTP_GET,
+        .handler  = stream_handler,
+        .user_ctx = NULL
+    };
+
+    if (httpd_start(&server, &config) == ESP_OK) {
+        httpd_register_uri_handler(server, &uri);
+        Serial.println("Server avviato su porta 80");
+    } else {
+        Serial.println("ERRORE: impossibile avviare il server");
     }
 }
 
-// ─── WEBSOCKET EVENTS ─────────────────
-void onWsEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
-               AwsEventType type, void* arg, uint8_t* data, size_t len) {
+// ─── WIFI ─────────────────────────────
+void initWiFi() {
 
-    if (type == WS_EVT_CONNECT) {
-        Serial.printf("Client #%u connesso da %s\n",
-                      client->id(), client->remoteIP().toString().c_str());
+    Serial.printf("Connessione a \"%s\"...\n", sta_ssid);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(sta_ssid, sta_password);
 
-    } else if (type == WS_EVT_DISCONNECT) {
-        Serial.printf("Client #%u disconnesso\n", client->id());
+    unsigned long t0 = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < STA_TIMEOUT_MS) {
+        delay(250);
+        Serial.print(".");
+    }
+    Serial.println();
+
+    if (WiFi.status() == WL_CONNECTED) {
+        connected_as_sta = true;
+        WiFi.setTxPower(WIFI_POWER_19_5dBm);
+        Serial.print("Connesso! IP: ");
+        Serial.println(WiFi.localIP());
+    } else {
+        Serial.println("Fallback AP");
+        WiFi.mode(WIFI_AP);
+        WiFi.softAPConfig(ap_ip, ap_gateway, ap_subnet);
+        WiFi.softAP(ap_ssid, ap_password);
+        WiFi.setTxPower(WIFI_POWER_19_5dBm);
+        Serial.print("AP IP: ");
+        Serial.println(WiFi.softAPIP());
     }
 }
 
@@ -134,40 +185,14 @@ bool initCamera() {
     return true;
 }
 
-// ─── WIFI ─────────────────────────────
-void initWiFi() {
-    if(STA_MODE){
-        Serial.printf("Connessione a \"%s\"...\n", sta_ssid);
-        WiFi.mode(WIFI_STA);
-        WiFi.begin(sta_ssid, sta_password);
-
-        unsigned long t0 = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - t0 < STA_TIMEOUT_MS) {
-            delay(250);
-            Serial.print(".");
-        }
-        Serial.println();
-
-        if (WiFi.status() == WL_CONNECTED) {
-            connected_as_sta = true;
-            Serial.print("Connesso! IP: ");
-            Serial.println(WiFi.localIP());
-        }
-    }else{
-        Serial.println("Stazione AP");
-        WiFi.mode(WIFI_AP);
-        WiFi.softAPConfig(ap_ip, ap_gateway, ap_subnet);
-        WiFi.softAP(ap_ssid, ap_password);
-        Serial.print("AP IP: ");
-        Serial.println(WiFi.softAPIP());
-    }
-}
-
 // ─── SETUP ────────────────────────────
 void setup() {
 
     Serial.begin(115200);
-    Serial.println("\n=== ESP32-CAM WebSocket ===");
+    Serial.println("\n=== ESP32-CAM MJPEG ===");
+
+    cam_sem = xSemaphoreCreateBinary();
+    xSemaphoreGive(cam_sem);
 
     if (!initCamera()) {
         delay(3000);
@@ -175,39 +200,14 @@ void setup() {
     }
 
     initWiFi();
-
-    // Registra handler WebSocket
-    ws.onEvent(onWsEvent);
-    server.addHandler(&ws);
-
-    // Pagina di test minimale (opzionale)
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->send(200, "text/plain", "ESP32-CAM WebSocket OK");
-    });
-
-    server.begin();
-    Serial.println("Server WebSocket avviato.");
+    startServer();
 
     IPAddress ip = connected_as_sta ? WiFi.localIP() : WiFi.softAPIP();
-    Serial.printf("ws://%s/ws\n", ip.toString().c_str());
-
-    // Avvia stream task su Core 0 (Core 1 è usato da Arduino)
-    xTaskCreatePinnedToCore(
-        stream_task,
-        "stream",
-        4096,       // stack
-        NULL,
-        2,          // priorità
-        &stream_task_handle,
-        0           // Core 0
-    );
+    Serial.printf("Stream: http://%s/stream\n", ip.toString().c_str());
 }
 
 // ─── LOOP ─────────────────────────────
 void loop() {
-
-    // Pulizia client WebSocket disconnessi
-    ws.cleanupClients();
 
     if (connected_as_sta && WiFi.status() != WL_CONNECTED) {
         Serial.println("WiFi perso — riavvio...");
@@ -215,5 +215,12 @@ void loop() {
         ESP.restart();
     }
 
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    if (server == NULL) {
+        Serial.println("Server NULL — riavvio...");
+        delay(1000);
+        ESP.restart();
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(2000));
 }
+    */

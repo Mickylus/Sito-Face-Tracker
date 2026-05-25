@@ -1,4 +1,4 @@
-/*
+
 #include <Arduino.h>
 #include "esp_camera.h"
 #include <WiFi.h>
@@ -10,8 +10,8 @@
 // ─── WIFI ─────────────────────────────
 
 // — Modalità STA: prova a connettersi all'hotspot iPhone —
-const char* sta_ssid     = "Diego-WIFI";
-const char* sta_password = "Manukitty1632";        // ← cambia con la password hotspot
+const char* sta_ssid     = "mickylus-ThinkPad-X390";
+const char* sta_password = "U27C5bB7";        // ← cambia con la password hotspot
 #define STA_TIMEOUT_MS   10000               // ms prima di rinunciare e usare AP
 
 // — Modalità AP: fallback se l'iPhone non è disponibile —
@@ -233,4 +233,3 @@ void loop() {
     vTaskDelay(pdMS_TO_TICKS(2000));
 }
 
-*/

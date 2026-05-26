@@ -121,7 +121,6 @@ void startServer() {
 // ─── WIFI ─────────────────────────────
 void initWiFi() {
 
-    // 1) Prova a connettersi all'iPhone
     Serial.printf("Connessione a \"%s\"...\n", sta_ssid);
     WiFi.mode(WIFI_STA);
     WiFi.begin(sta_ssid, sta_password);

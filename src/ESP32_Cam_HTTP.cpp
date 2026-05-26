@@ -134,15 +134,15 @@ void initWiFi() {
     Serial.println();
 
     if (WiFi.status() == WL_CONNECTED) {
-        // Connesso all'iPhone ✅
+        // Connesso a Hotspot PC
         connected_as_sta = true;
         WiFi.setTxPower(WIFI_POWER_19_5dBm);
         Serial.print("Connesso! IP: ");
         Serial.println(WiFi.localIP());
 
     } else {
-        // Fallback: crea AP proprio
-        Serial.println("iPhone non trovato — avvio AP di fallback.");
+        // Fallback: crea AP
+        Serial.println("Thinkpad X390 non trovato — avvio AP di fallback.");
         WiFi.mode(WIFI_AP);
         WiFi.softAPConfig(ap_ip, ap_gateway, ap_subnet);
         WiFi.softAP(ap_ssid, ap_password);

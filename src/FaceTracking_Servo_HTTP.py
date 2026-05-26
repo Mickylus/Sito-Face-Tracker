@@ -33,10 +33,10 @@ PID_KP = 0.04
 PID_KI = 0.001
 PID_KD = 0.008
 
-CENTER_TOL      = 25   # pixel dead-zone
+CENTER_TOL      = 15   # pixel dead-zone
 DETECT_SKIP     = 4    # detection ogni N frame
 NO_FACE_TIMEOUT = 3.0  # secondi prima di tornare al centro
-SMOOTH_WIN      = 15  # finestra media mobile servo
+SMOOTH_WIN      = 13  # finestra media mobile servo
 SERVO_HZ        = 30   # max comandi seriale al secondo
 
 # ─── MODEL ────────────────────────────────────────────────────────────────────

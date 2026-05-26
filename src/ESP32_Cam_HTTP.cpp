@@ -52,7 +52,6 @@ static SemaphoreHandle_t cam_sem = NULL;
 static esp_err_t stream_handler(httpd_req_t *req) {
 
     if (xSemaphoreTake(cam_sem, pdMS_TO_TICKS(500)) != pdTRUE) {
-       
         return ESP_FAIL;
     }
 
@@ -68,16 +67,23 @@ static esp_err_t stream_handler(httpd_req_t *req) {
     while (true) {
 
         camera_fb_t *fb = esp_camera_fb_get();
-        if (!fb) { vTaskDelay(1); continue; }
+        if (!fb){
+            vTaskDelay(1);
+            continue;
+        }
 
         res = httpd_resp_send_chunk(req, part, part_len);
-        if (res != ESP_OK) { esp_camera_fb_return(fb); break; }
+        if(res != ESP_OK){
+            esp_camera_fb_return(fb);
+            break;
+        }
 
         res = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
         esp_camera_fb_return(fb);
 
-        if (res != ESP_OK) break;
-
+        if (res != ESP_OK){
+            break;
+        }
         vTaskDelay(pdMS_TO_TICKS(20));  // ~25 FPS
     }
 

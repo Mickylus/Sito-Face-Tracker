@@ -33,16 +33,11 @@ PID_KP = 0.04
 PID_KI = 0.001
 PID_KD = 0.008
 
-CENTER_TOL      = 15
-DETECT_SKIP     = 4
-NO_FACE_TIMEOUT = 3.0
-SMOOTH_WIN      = 13
-SERVO_HZ        = 30
-
-# Colori HUD per numero di volti
-COLOR_1_FACE  = (60,  60,  255)   # rosso  — 1 volto
-COLOR_2_FACES = (255, 60,  60 )   # blu    — 2 volti
-COLOR_3_FACES = (0,   220, 220)   # giallo — 3 volti
+CENTER_TOL      = 15   # pixel dead-zone
+DETECT_SKIP     = 4    # detection ogni N frame
+NO_FACE_TIMEOUT = 3.0  # secondi prima di tornare al centro
+SMOOTH_WIN      = 13  # finestra media mobile servo
+SERVO_HZ        = 30   # max comandi seriale al secondo
 
 # ─── MODEL ────────────────────────────────────────────────────────────────────
 if not os.path.exists(MODEL_PATH):
@@ -124,6 +119,7 @@ faces_lock   = threading.Lock()
 running      = True
 
 # ─── STREAM READER ────────────────────────────────────────────────────────────
+# Stesso approccio byte-per-byte che funziona — wrapped in thread con reconnect
 SOI = b"\xff\xd8"
 EOI = b"\xff\xd9"
 
@@ -138,6 +134,7 @@ def stream_reader():
             buf = b""
 
             while running:
+                # Cerca SOI
                 while True:
                     b1 = stream.read(1)
                     if b1 == b"\xff":
@@ -146,6 +143,7 @@ def stream_reader():
                             buf = SOI
                             break
 
+                # Leggi fino a EOI
                 while True:
                     b1 = stream.read(1)
                     buf += b1
@@ -199,11 +197,7 @@ def detection_worker():
 
         faces = []
         if res.detections:
-            # Prendi i 3 volti con score più alto
-            detections = sorted(res.detections,
-                                key=lambda d: d.categories[0].score if d.categories else 0,
-                                reverse=True)[:3]
-            for d in detections:
+            for d in res.detections:
                 bb    = d.bounding_box
                 score = d.categories[0].score if d.categories else 0.0
                 faces.append((bb.origin_x, bb.origin_y, bb.width, bb.height, score))
@@ -237,23 +231,13 @@ while True:
 
     if faces:
         last_face_time = time.monotonic()
-        n = len(faces)
+        x, y, bw, bh, score = max(faces, key=lambda f: f[2] * f[3])
 
-        # Colore linee in base al numero di volti
-        if n == 1:
-            line_color = COLOR_1_FACE
-        elif n == 2:
-            line_color = COLOR_2_FACES
-        else:
-            line_color = COLOR_3_FACES
+        cx = x + bw // 2
+        cy = y + bh // 2
 
-        # Calcola il centroide tra tutti i volti rilevati
-        centers = [(x + bw // 2, y + bh // 2) for x, y, bw, bh, _ in faces]
-        target_cx = int(np.mean([c[0] for c in centers]))
-        target_cy = int(np.mean([c[1] for c in centers]))
-
-        err_x = target_cx - cx_frame
-        err_y = target_cy - cy_frame
+        err_x = cx - cx_frame
+        err_y = cy - cy_frame
 
         if abs(err_x) <= CENTER_TOL:
             err_x = 0
@@ -263,7 +247,7 @@ while True:
             pid_tilt.reset()
 
         pan_buf.append(np.clip(pan  + (-pid_pan.update(err_x)),  PAN_MIN,  PAN_MAX))
-        tilt_buf.append(np.clip(tilt -  pid_tilt.update(err_y),  TILT_MIN, TILT_MAX))
+        tilt_buf.append(np.clip(tilt - pid_tilt.update(err_y), TILT_MIN, TILT_MAX))
         pan  = int(np.mean(pan_buf))
         tilt = int(np.mean(tilt_buf))
 
@@ -272,20 +256,11 @@ while True:
             send_servo(pan, tilt)
             last_servo_time = now
 
-        # Disegna ogni volto
-        for x, y, bw, bh, score in faces:
-            cx_f = x + bw // 2
-            cy_f = y + bh // 2
-            cv2.rectangle(frame, (x, y), (x+bw, y+bh), (0, 220, 80), 2)
-            cv2.circle(frame, (cx_f, cy_f), 4, (0, 220, 80), -1)
-            cv2.putText(frame, f"{score:.0%}",(x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 80), 1, cv2.LINE_AA)
-            # Linea da ogni volto al punto target
-            cv2.line(frame, (cx_frame, cy_frame), (cx_f, cy_f), line_color, 1)
-
-        # Punto target (centroide) — più grande se più volti
-        cv2.circle(frame, (target_cx, target_cy), 4 + n * 2, line_color, -1)
-        cv2.putText(frame, f"P:{pan} T:{tilt}  [{n} volti]",
-                    (8, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, line_color, 1, cv2.LINE_AA)
+        cv2.rectangle(frame, (x, y), (x+bw, y+bh), (0, 220, 80), 2)
+        cv2.circle(frame, (cx, cy), 5, (0, 60, 255), -1)
+        cv2.line(frame, (cx_frame, cy_frame), (cx, cy), (60, 60, 255), 1)
+        cv2.putText(frame, f"{score:.0%}  P:{pan} T:{tilt}",
+                    (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 80), 1, cv2.LINE_AA)
 
     else:
         pid_pan.reset()
@@ -301,7 +276,7 @@ while True:
                 send_servo(pan, tilt)
                 last_servo_time = now
 
-    # Mirino centrale
+    # Mirino
     cv2.line(frame, (cx_frame-20, cy_frame), (cx_frame+20, cy_frame), (200, 200, 200), 1)
     cv2.line(frame, (cx_frame, cy_frame-20), (cx_frame, cy_frame+20), (200, 200, 200), 1)
 

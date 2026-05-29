@@ -12,6 +12,8 @@ from collections import deque
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 ESP32_IP   = "10.42.0.184"
+# 192.168.4.1 AP
+# 10.42.0.184 PC
 STREAM_URL = f"http://{ESP32_IP}/stream"
 
 SERIAL_PORT = "/dev/ttyUSB0"
@@ -21,7 +23,7 @@ MODEL_PATH = "face.tflite"
 MODEL_URL  = ("https://storage.googleapis.com/mediapipe-models/face_detector/"
               "blaze_face_short_range/float16/latest/blaze_face_short_range.tflite")
 
-IMAGE_ROTATION = -2
+IMAGE_ROTATION = 0
 
 # Servo
 PAN_CENTER,  TILT_CENTER = 90, 90
@@ -36,7 +38,7 @@ PID_KD = 0.008
 CENTER_TOL      = 15   # pixel dead-zone
 DETECT_SKIP     = 4    # detection ogni N frame
 NO_FACE_TIMEOUT = 3.0  # secondi prima di tornare al centro
-SMOOTH_WIN      = 13  # finestra media mobile servo
+SMOOTH_WIN      = 30  # finestra media mobile servo
 SERVO_HZ        = 30   # max comandi seriale al secondo
 
 # ─── MODEL ────────────────────────────────────────────────────────────────────

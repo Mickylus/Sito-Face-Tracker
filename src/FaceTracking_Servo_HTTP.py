@@ -33,11 +33,11 @@ PID_KP = 0.04
 PID_KI = 0.001
 PID_KD = 0.008
 
-CENTER_TOL      = 15
-DETECT_SKIP     = 4
-NO_FACE_TIMEOUT = 3.0
-SMOOTH_WIN      = 13
-SERVO_HZ        = 30
+CENTER_TOL      = 15    # pixel dead zone
+DETECT_SKIP     = 4     # detect every n frame
+NO_FACE_TIMEOUT = 3.0   # secondi prima di resettarsi
+SMOOTH_WIN      = 13    # velocità servo
+SERVO_HZ        = 30    # max comandi al secondo
 
 # Colori HUD per numero di volti
 COLOR_1_FACE  = (60,  60,  255)   # rosso  — 1 volto
@@ -62,7 +62,7 @@ ser = None
 def init_serial():
     global ser
     try:
-        ser = serial.Serial(SERIAL_PORT, BAUDRATE, timeout=1)
+        ser = serial.Serial(SERIAL_PORT, BAUDRATE, timeout=1) # prova ad aprire la porta seriale
         time.sleep(2)
         print(f"Seriale OK: {SERIAL_PORT}")
     except serial.SerialException as e:
@@ -72,7 +72,7 @@ def send_servo(p: int, t: int):
     if ser is None:
         return
     try:
-        ser.write(f"{p},{t}\n".encode())
+        ser.write(f"{p},{t}\n".encode()) # manda gli angoli formattati es. 90,90
         ser.flush()
     except serial.SerialException:
         pass
@@ -80,6 +80,7 @@ def send_servo(p: int, t: int):
 init_serial()
 
 # ─── PID ──────────────────────────────────────────────────────────────────────
+# calcola i gradi per spostarsi
 class PID:
     def __init__(self, kp, ki, kd, out_min=-8.0, out_max=8.0):
         self.kp, self.ki, self.kd = kp, ki, kd
@@ -132,7 +133,7 @@ def stream_reader():
 
     while running:
         try:
-            print(f"Connessione a {STREAM_URL} ...")
+            print(f"Connessione a {STREAM_URL} ...")                    # apre la stream di immagini
             stream = urllib.request.urlopen(STREAM_URL, timeout=30)
             print("Stream connesso.")
             buf = b""
@@ -203,7 +204,7 @@ def detection_worker():
             detections = sorted(res.detections,
                                 key=lambda d: d.categories[0].score if d.categories else 0,
                                 reverse=True)[:3]
-            for d in detections:
+            for d in detections:   
                 bb    = d.bounding_box
                 score = d.categories[0].score if d.categories else 0.0
                 faces.append((bb.origin_x, bb.origin_y, bb.width, bb.height, score))
@@ -277,15 +278,13 @@ while True:
             cx_f = x + bw // 2
             cy_f = y + bh // 2
             cv2.rectangle(frame, (x, y), (x+bw, y+bh), (0, 220, 80), 2)
-            cv2.circle(frame, (cx_f, cy_f), 4, (0, 220, 80), -1)
+            
             cv2.putText(frame, f"{score:.0%}",(x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 220, 80), 1, cv2.LINE_AA)
             # Linea da ogni volto al punto target
             cv2.line(frame, (cx_frame, cy_frame), (cx_f, cy_f), line_color, 1)
 
         # Punto target (centroide) — più grande se più volti
-        cv2.circle(frame, (target_cx, target_cy), 4 + n * 2, line_color, -1)
-        cv2.putText(frame, f"P:{pan} T:{tilt}  [{n} volti]",
-                    (8, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, line_color, 1, cv2.LINE_AA)
+        
 
     else:
         pid_pan.reset()
@@ -306,7 +305,7 @@ while True:
     cv2.line(frame, (cx_frame, cy_frame-20), (cx_frame, cy_frame+20), (200, 200, 200), 1)
 
     cv2.imshow("cam", frame)
-    if cv2.waitKey(1) == ord('q'):
+    if cv2.waitKey(1) == ord('q'): #premi 'q' per uscire
         running = False
         break
 

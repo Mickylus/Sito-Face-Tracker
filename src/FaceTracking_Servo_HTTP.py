@@ -12,6 +12,8 @@ from collections import deque
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 ESP32_IP   = "10.42.0.184"
+# 192,168,4,1
+# 10.42.0.184
 STREAM_URL = f"http://{ESP32_IP}/stream"
 
 SERIAL_PORT = "/dev/ttyUSB0"
@@ -33,7 +35,7 @@ PID_KP = 0.04
 PID_KI = 0.001
 PID_KD = 0.008
 
-CENTER_TOL      = 15    # pixel dead zone
+CENTER_TOL      = 10    # pixel dead zone
 DETECT_SKIP     = 4     # detect every n frame
 NO_FACE_TIMEOUT = 3.0   # secondi prima di resettarsi
 SMOOTH_WIN      = 13    # velocità servo
